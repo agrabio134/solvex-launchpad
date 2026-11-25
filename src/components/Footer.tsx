@@ -1,54 +1,42 @@
 import { Link } from 'react-router-dom'
 import { TG_URL, X_URL } from '../lib/config'
-import { useLaunchpad } from '../lib/hooks'
 import Logo from './Logo'
 
 export default function Footer() {
-  const { svxMint } = useLaunchpad()
   return (
     <footer className="ftr">
       <div className="ftr-in">
-        <div className="ftr-brand">
+        <div>
           <div className="brand">
-            <Logo />
-            <span>SOLVEX</span>
+            <Logo size={28} />
+            Solvex
           </div>
-          <p>One token. An entire ecosystem.</p>
+          <p>Launch a coin on Solana, pair it with SOL, USDC or a tokenized stock, and graduate it into locked liquidity.</p>
         </div>
         <div className="ftr-cols">
           <div>
-            <h5>App</h5>
-            <Link to="/board">Board</Link>
+            <h5>Trade</h5>
+            <Link to="/markets">Markets</Link>
+            <Link to="/stocks">Stock pairs</Link>
+            <Link to="/portfolio">Portfolio</Link>
+          </div>
+          <div>
+            <h5>Create</h5>
             <Link to="/launch">Launch a coin</Link>
-            <Link to="/profile">My coins</Link>
-          </div>
-          <div>
-            <h5>Ecosystem</h5>
-            <Link to="/docs">Docs</Link>
-            <Link to="/docs#graduation">Graduation</Link>
             <Link to="/docs#fees">Fees</Link>
+            <Link to="/docs#graduation">Graduation</Link>
           </div>
           <div>
-            <h5>$FLIP</h5>
-            {svxMint && (
-              <a href={`https://jup.ag/swap/SOL-${svxMint}`} target="_blank" rel="noreferrer">
-                Buy $FLIP
-              </a>
-            )}
-            <a href={X_URL} target="_blank" rel="noreferrer">
-              X / Twitter
-            </a>
-            {TG_URL && (
-              <a href={TG_URL} target="_blank" rel="noreferrer">
-                Telegram
-              </a>
-            )}
+            <h5>Community</h5>
+            <a href={X_URL} target="_blank" rel="noreferrer">X</a>
+            {TG_URL && <a href={TG_URL} target="_blank" rel="noreferrer">Telegram</a>}
+            <Link to="/docs">Docs</Link>
           </div>
         </div>
       </div>
       <div className="ftr-base">
-        <span>© {new Date().getFullYear()} Solvex</span>
-        <span>Memecoins are volatile. Nothing here is financial advice.</span>
+        <span>© {new Date().getFullYear()} Solvex. Built on Meteora.</span>
+        <span>Memecoins are volatile and can lose all value. Tokenized stock pairs are subject to issuer terms.</span>
       </div>
     </footer>
   )

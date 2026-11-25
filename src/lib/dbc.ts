@@ -20,7 +20,19 @@ import {
   VersionedTransaction,
   type ParsedTransactionWithMeta,
 } from '@solana/web3.js'
-import { getAssociatedTokenAddressSync, unpackMint, getTransferFeeConfig, getTransferHook, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import {
+  AccountState,
+  ExtensionType,
+  getAssociatedTokenAddressSync,
+  getDefaultAccountState,
+  getExtensionTypes,
+  getPausableConfig,
+  getTransferFeeConfig,
+  getTransferHook,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  unpackMint,
+} from '@solana/spl-token'
 import {
   ActivationType,
   BaseFeeMode,
@@ -45,7 +57,6 @@ import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import {
   FINAL_STRETCH_AT,
   LISTED_AFTER,
-  QUOTE_MINT,
   WSOL_MINT,
   GRAD_MCAP_FLIP,
   GRAD_MCAP_USD,
@@ -59,6 +70,7 @@ import { fromAtomic, toAtomic, validateLaunch } from './validation'
 export type CoinStatus = 'new' | 'final' | 'graduated'
 
 export interface Coin {
+  quoteMint: string
   pool: string
   config: string
   tradingPool: string
@@ -87,10 +99,31 @@ export interface Coin {
   partnerFeeSvx: number
 }
 
-export interface Launchpad {
-  quoteMint: PublicKey
-  quoteDecimals: number
-  quoteProgram: PublicKey
+export interface Asset {
+  mint: string
+  symbol: string
+  name: string
+  category: 'crypto' | 'stock'
+  logo?: string
+  halted?: boolean
+}
+
+export const CORE_ASSETS: Asset[] = [
+  { mint: WSOL_MINT.toBase58(), symbol: 'SOL', name: 'Solana', category: 'crypto' },
+  { mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC', name: 'USD Coin', category: 'crypto' },
+]
+
+let _assets: Promise<{ assets: Asset[]; error?: string }> | null = null
+/** SOL, USDC, $FLIP (when live) and the xStocks tokenized-stock catalogue. */
+export function fetchAssets(): Promise<{ assets: Asset[]; error?: string }> {
+  if (!_assets) {
+    _assets = fetch('/api/assets', { signal: AbortSignal.timeout(20000) })
+      .then((r) => r.json())
+      .then((d) => ({ assets: d.assets?.length ? d.assets : CORE_ASSETS, error: d.error }))
+      .catch(() => ({ assets: CORE_ASSETS, error: 'Stock catalogue unavailable right now.' }))
+    _assets.then((r) => r.error && setTimeout(() => (_assets = null), 30000))
+  }
+  return _assets
 }
 
 const U64_MAX = new BN('18446744073709551615')
@@ -117,6 +150,8 @@ export function mintInfo(connection: Connection, mint: PublicKey) {
       const info = unpackMint(mint, acc, acc.owner)
       const hook = getTransferHook(info)
       const fee = getTransferFeeConfig(info)
+      if (getExtensionTypes(info.tlvData).includes(ExtensionType.NonTransferable) || getPausableConfig(info)?.paused || getDefaultAccountState(info)?.state === AccountState.Frozen)
+        throw new Error('This token is paused, frozen by default or non-transferable')
       if (hook && !hook.programId.equals(PublicKey.default)) throw new Error('Tokens with transfer hooks are not supported')
       if (fee && (fee.olderTransferFee.transferFeeBasisPoints !== 0 || fee.newerTransferFee.transferFeeBasisPoints !== 0))
         throw new Error('Tokens with transfer fees are not supported')
@@ -128,40 +163,33 @@ export function mintInfo(connection: Connection, mint: PublicKey) {
   return mintCache.get(key)!
 }
 
-let _lp: Promise<Launchpad> | null = null
-export function getLaunchpad(connection: Connection): Promise<Launchpad> {
-  if (!_lp) {
-    _lp = (async () => {
-      const m = await mintInfo(connection, QUOTE_MINT)
-      return { quoteMint: QUOTE_MINT, quoteDecimals: m.decimals, quoteProgram: m.program }
-    })()
-    _lp.catch(() => (_lp = null))
-  }
-  return _lp
-}
-
 export async function assertMainnet(connection: Connection) {
   if ((await connection.getGenesisHash()) !== MAINNET_GENESIS) throw new Error('RPC is not Solana mainnet. Nothing was sent.')
 }
 
 /* --------------------------------------------------------- $FLIP price */
 
-export async function fetchFlipUsd(): Promise<number | null> {
-  try {
-    const r = await fetch(`/api/market-data?mint=${QUOTE_MINT.toBase58()}`, { signal: AbortSignal.timeout(12000) })
-    const j = await r.json()
-    return r.ok && Number.isFinite(j.usd) && j.usd > 0 ? j.usd : null
-  } catch {
-    return null
-  }
+const usdCache = new Map<string, { at: number; p: Promise<number | null> }>()
+/** USD price of a quote asset (GeckoTerminal, Jupiter fallback), cached 60s. */
+export function quoteUsd(mint: string): Promise<number | null> {
+  const hit = usdCache.get(mint)
+  if (hit && Date.now() - hit.at < 60000) return hit.p
+  const p = fetch(`/api/market-data?mint=${mint}`, { signal: AbortSignal.timeout(12000) })
+    .then(async (r) => {
+      const j = await r.json()
+      return r.ok && Number.isFinite(j.usd) && j.usd > 0 ? (j.usd as number) : null
+    })
+    .catch(() => null)
+  usdCache.set(mint, { at: Date.now(), p })
+  return p
 }
 
-/** Opening / graduation market caps in $FLIP for a launch right now. */
-export async function launchCaps() {
-  const usd = await fetchFlipUsd()
+/** Opening / graduation market caps, in units of the chosen quote asset, for a launch right now. */
+export async function launchCaps(quoteMint: string) {
+  const usd = await quoteUsd(quoteMint)
   if (usd) return { initialCap: OPEN_MCAP_USD / usd, graduationCap: GRAD_MCAP_USD / usd, usd }
-  if (OPEN_MCAP_FLIP > 0 && GRAD_MCAP_FLIP > OPEN_MCAP_FLIP) return { initialCap: OPEN_MCAP_FLIP, graduationCap: GRAD_MCAP_FLIP, usd: null }
-  throw new Error('No live price for the quote token yet, so launch size cannot be set. Try again shortly.')
+  if (quoteMint !== WSOL_MINT.toBase58() && OPEN_MCAP_FLIP > 0 && GRAD_MCAP_FLIP > OPEN_MCAP_FLIP) return { initialCap: OPEN_MCAP_FLIP, graduationCap: GRAD_MCAP_FLIP, usd: null }
+  throw new Error('No live USD price for this pair right now, so the launch size cannot be set. Retry shortly.')
 }
 
 /* --------------------------------------------------------- metadata */
@@ -208,7 +236,6 @@ const listed = (pool: VirtualPool) => Number(pool.poolState.activationPoint.toSt
 
 async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
   if (!rows.length) return []
-  const lp = await getLaunchpad(connection)
   const { amm } = sdk(connection)
   const metas: ({ name: string; symbol: string; uri: string } | null)[] = []
   for (let i = 0; i < rows.length; i += 100) {
@@ -226,7 +253,7 @@ async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
     rows.map(async (r, i): Promise<Coin> => {
       const s = r.pool.poolState
       const c = r.config
-      const qd = lp.quoteDecimals
+      const qd = (await mintInfo(connection, c.quoteMint)).decimals
       let price = Number(getPriceFromSqrtPrice(s.sqrtPrice, c.tokenDecimal, qd).toString())
       const reserve = fromAtomic(s.quoteReserve, qd)
       const threshold = fromAtomic(c.migrationQuoteThreshold, qd)
@@ -249,6 +276,7 @@ async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
       const progress = threshold > 0 ? Math.min(1, reserve / threshold) : 0
       const m = metas[i]
       return {
+        quoteMint: c.quoteMint.toBase58(),
         pool: r.key.toBase58(),
         config: s.config.toBase58(),
         tradingPool,
@@ -292,7 +320,7 @@ async function platformConfigs(connection: Connection) {
   if (!_cfgs || Date.now() - _cfgs.at > 20000) {
     const list = sdk(connection)
       .dbc.state.getPoolConfigsByOwner(PLATFORM_WALLET)
-      .then((all) => all.filter((c) => c.account.quoteMint.equals(QUOTE_MINT)).map((c) => ({ key: c.publicKey, config: c.account })))
+      .then((all) => all.map((c) => ({ key: c.publicKey, config: c.account })))
     _cfgs = { at: Date.now(), list }
     list.catch(() => (_cfgs = null))
   }
@@ -314,7 +342,7 @@ export async function fetchCoins(connection: Connection): Promise<Coin[]> {
 
 async function rowFor(connection: Connection, poolKey: PublicKey, pool: VirtualPool): Promise<Row | null> {
   const config = await sdk(connection).dbc.state.getPoolConfig(pool.poolState.config)
-  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET) || !config.quoteMint.equals(QUOTE_MINT)) return null
+  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET)) return null
   return { key: poolKey, pool, config }
 }
 
@@ -366,7 +394,6 @@ export interface Trade {
 
 /** Recent swaps (curve, or DAMM v2 once migrated), rebuilt from the trader's balance changes. Newest first. */
 export async function fetchTrades(connection: Connection, coin: Coin, limit = 20): Promise<Trade[]> {
-  const lp = await getLaunchpad(connection)
   const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.tradingPool), { limit })).filter((s) => !s.err)
   const txs: (ParsedTransactionWithMeta | null)[] = []
   for (let i = 0; i < sigs.length; i += 10) {
@@ -377,7 +404,7 @@ export async function fetchTrades(connection: Connection, coin: Coin, limit = 20
       txs.push(...part.map(() => null)) // rate-limited: show what we have
     }
   }
-  const quote = lp.quoteMint.toBase58()
+  const quote = coin.quoteMint
   const out: Trade[] = []
   txs.forEach((tx, i) => {
     const meta = tx?.meta
@@ -407,6 +434,7 @@ export async function fetchTrades(connection: Connection, coin: Coin, limit = 20
 /* ------------------------------------------------------------ launch */
 
 export interface LaunchParams {
+  quoteMint: string
   name: string
   symbol: string
   uri: string
@@ -454,25 +482,30 @@ function curveFor(p: LaunchParams, quoteDecimals: number, initialCap: number, gr
 export async function buildLaunch(connection: Connection, creator: PublicKey, p: LaunchParams) {
   validateLaunch(p.name, p.symbol)
   if (!Number.isInteger(p.feeBps) || p.feeBps < 100 || p.feeBps > 300) throw new Error('Fee must be 1–3%.')
-  const lp = await getLaunchpad(connection)
-  const caps = await launchCaps()
+  const quoteMint = new PublicKey(p.quoteMint)
+  const assets = (await fetchAssets()).assets
+  const asset = assets.find((a) => a.mint === p.quoteMint)
+  if (!asset) throw new Error('Choose a supported pair.')
+  if (asset.halted) throw new Error(`The issuer has halted ${asset.symbol}.`)
+  const q = await mintInfo(connection, quoteMint)
+  const caps = await launchCaps(p.quoteMint)
   if (caps.graduationCap < caps.initialCap * 3) throw new Error('Graduation cap must be at least 3× the opening cap.')
-  const curve = curveFor(p, lp.quoteDecimals, caps.initialCap, caps.graduationCap)
+  const curve = curveFor(p, q.decimals, caps.initialCap, caps.graduationCap)
   const config = Keypair.generate()
   const baseMint = Keypair.generate()
   const { dbc } = sdk(connection)
-  const badge = await dbc.state.getTokenBadge(lp.quoteMint).catch(() => null)
+  const badge = q.program.equals(TOKEN_2022_PROGRAM_ID) ? await dbc.state.getTokenBadge(quoteMint).catch(() => null) : null
   const tx = await dbc.partner.createConfigAndPool({
     ...curve,
     config: config.publicKey,
     payer: creator,
     feeClaimer: PLATFORM_WALLET,
     leftoverReceiver: PLATFORM_WALLET,
-    quoteMint: lp.quoteMint,
-    tokenBadge: badge ? deriveTokenBadgeAddress(lp.quoteMint) : undefined,
+    quoteMint,
+    tokenBadge: badge ? deriveTokenBadgeAddress(quoteMint) : undefined,
     preCreatePoolParam: { name: p.name.trim(), symbol: p.symbol, uri: p.uri, poolCreator: creator, baseMint: baseMint.publicKey },
   })
-  const pool = deriveDbcPoolAddress(lp.quoteMint, baseMint.publicKey, config.publicKey).toBase58()
+  const pool = deriveDbcPoolAddress(quoteMint, baseMint.publicKey, config.publicKey).toBase58()
   return { tx, signers: [config, baseMint], pool, mint: baseMint.publicKey.toBase58(), caps }
 }
 
@@ -488,12 +521,13 @@ export interface Prepared {
 
 export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell', amount: string, slippageBps: number, owner: PublicKey): Promise<Prepared> {
   if (!Number.isInteger(slippageBps) || slippageBps < 10 || slippageBps > 1000) throw new Error('Slippage must be 0.1–10%.')
-  const lp = await getLaunchpad(connection)
   const { dbc, amm } = sdk(connection)
   const sell = side === 'sell'
+  const quoteKey = new PublicKey(coin.quoteMint)
   const base = await mintInfo(connection, new PublicKey(coin.mint))
-  const inDec = sell ? base.decimals : lp.quoteDecimals
-  const outDec = sell ? lp.quoteDecimals : base.decimals
+  const quote = await mintInfo(connection, quoteKey)
+  const inDec = sell ? base.decimals : quote.decimals
+  const outDec = sell ? quote.decimals : base.decimals
   const amountIn = toAtomic(amount, inDec)
   const pool = await dbc.state.getPool(coin.pool)
   if (!pool) throw new Error('Pool no longer available.')
@@ -507,11 +541,11 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
     const time = await connection.getBlockTime(slot)
     if (time === null) throw new Error('Chain time unavailable, retry.')
     const baseKey = new PublicKey(coin.mint)
-    const input = sell ? baseKey : lp.quoteMint
-    const output = sell ? lp.quoteMint : baseKey
+    const input = sell ? baseKey : quoteKey
+    const output = sell ? quoteKey : baseKey
     const aIsBase = state.tokenAMint.equals(baseKey)
-    const a = aIsBase ? base : { decimals: lp.quoteDecimals, program: lp.quoteProgram }
-    const b = aIsBase ? { decimals: lp.quoteDecimals, program: lp.quoteProgram } : base
+    const a = aIsBase ? base : quote
+    const b = aIsBase ? quote : base
     const q = amm.getQuote({ inAmount: amountIn, inputTokenMint: input, slippage: slippageBps / 100, poolState: state, currentTime: time, currentSlot: slot, tokenADecimal: a.decimals, tokenBDecimal: b.decimals })
     if (!q.consumedInAmount.eq(amountIn)) throw new Error('This amount cannot be fully filled. Try a smaller amount.')
     const tx = await amm.swap({
@@ -618,13 +652,13 @@ export async function tokenBalance(connection: Connection, owner: PublicKey, min
   }
 }
 
-/** Spendable quote balance: native SOL (minus a small fee reserve) or the $FLIP token balance. */
-export async function svxBalance(connection: Connection, owner: PublicKey) {
-  if (QUOTE_MINT.equals(WSOL_MINT)) {
+/** Spendable balance of a quote asset: native SOL (minus a small fee reserve) or the token balance. */
+export async function quoteBalance(connection: Connection, owner: PublicKey, quoteMint: string) {
+  if (quoteMint === WSOL_MINT.toBase58()) {
     const lamports = await connection.getBalance(owner).catch(() => 0)
     return Math.max(0, lamports / 1e9 - 0.01)
   }
-  return tokenBalance(connection, owner, QUOTE_MINT)
+  return tokenBalance(connection, owner, new PublicKey(quoteMint))
 }
 
 /* ------------------------------------------------------------ submit */
@@ -641,7 +675,9 @@ export async function submit(connection: Connection, owner: PublicKey, signTrans
   const latest = await connection.getLatestBlockhash('confirmed')
   fresh.feePayer = owner
   fresh.recentBlockhash = latest.blockhash
-  fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+  fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
+  // launch / migration txs carry extra signers and sit near the size limit, so they skip the priority-fee instruction
+  if (!signers.length) fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
   const vtx = new VersionedTransaction(fresh.compileMessage())
   if (signers.length) vtx.sign(signers)
   if (vtx.serialize().length > 1232) throw new Error('Transaction is too large. Use a shorter name or ticker.')

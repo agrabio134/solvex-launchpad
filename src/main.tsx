@@ -8,7 +8,7 @@ import './styles.css'
 import App from './App'
 import { RPC_URL } from './lib/config'
 import { ToastProvider } from './components/Toast'
-import { LaunchpadProvider } from './lib/hooks'
+import { AssetsProvider } from './lib/hooks'
 
 function Root() {
   // Phantom, Solflare, Backpack etc. are picked up automatically through the Wallet Standard.
@@ -17,13 +17,13 @@ function Root() {
     <ConnectionProvider endpoint={RPC_URL} config={{ commitment: 'confirmed' }}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
-          <LaunchpadProvider>
+          <AssetsProvider>
             <ToastProvider>
               <BrowserRouter>
                 <App />
               </BrowserRouter>
             </ToastProvider>
-          </LaunchpadProvider>
+          </AssetsProvider>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

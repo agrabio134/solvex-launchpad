@@ -1,246 +1,190 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useCoins } from '../lib/hooks'
-import { FLIP_LIVE, GRAD_MCAP_USD, Q } from '../lib/config'
-
-const QD = FLIP_LIVE ? '$FLIP' : 'SOL'
-import type { Coin } from '../lib/dbc'
-import { compact } from '../lib/format'
-import CoinCard from '../components/CoinCard'
-
-function useLaunchParams() {
-  return {
-    threshold: `$${compact(GRAD_MCAP_USD, 0)} market cap`,
-    fee: '1–3%',
-    creatorShare: '50%',
-  }
-}
+import { useAssets, useCoins, useUsdMany } from '../lib/hooks'
+import { GRAD_MCAP_USD, OPEN_MCAP_USD } from '../lib/config'
+import { ago, compact } from '../lib/format'
+import { AssetIcon, CoinImg, MarketHead, MarketRow, PairTag, usd } from '../components/Bits'
 
 const FAQ: [string, string][] = [
-  ['What is $FLIP?', FLIP_LIVE ? 'The native currency of Solvex. Every coin launched here is priced, bought and sold in $FLIP, so all activity on the platform flows through one token.' : 'The native currency of Solvex, launching soon. Until it is live, every market on Solvex is paired with SOL; new launches switch to $FLIP pairs once it is out.'],
-  ['How do I launch a coin?', 'Connect a Solana wallet holding a little SOL for network fees, open Launch, add an image, a name and a ticker, and optionally make the first buy in $FLIP. The coin appears in New Pairs as soon as the transaction confirms.'],
-  ['How is the price set?', 'Each coin trades on its own Meteora Dynamic Bonding Curve. Buying with ' + QD + ' moves the price up the curve, selling moves it down. There are no presales and no team allocations: everyone buys from the same curve.'],
-  ['What does graduation mean?', 'When a curve has collected its graduation target in ' + QD + ', trading on the curve stops. One click (by anyone) migrates the liquidity into a locked Meteora DAMM v2 pool on Solana, where the coin keeps trading here and on every aggregator.'],
-  ['Is the graduated liquidity locked?', 'Yes. The LP created at graduation is permanently locked, so it cannot be pulled.'],
-  ['Do creators earn anything?', 'Creators earn a share of every trading fee on their coin. Fees build up in the pool and can be claimed anytime from My coins.'],
-  ['Which wallets work?', 'Any Solana wallet that supports the Wallet Standard: Phantom, Solflare, Backpack and others.'],
-  ['Is this financial advice?', 'No. Memecoins are extremely volatile and most go to zero. Only use what you can afford to lose.'],
+  ['What can I pair my coin with?', 'SOL, USDC, or any tokenized stock or ETF the xStocks issuer has on Solana, such as NVDAx or TSLAx. Traders buy your coin with the pair you choose, and fees are earned in it. $FLIP joins the list when it launches.'],
+  ['Does a stock pair mean my coin is backed by the stock?', 'No. The stock is only the currency traders use to buy your coin. Tokenized stocks are issued by xStocks, are not brokerage shares, and come with issuer terms and regional restrictions.'],
+  ['How is the price set?', 'Each coin trades on its own Meteora bonding curve. Buys move the price up and sells move it down. No presale and no team allocation: everyone buys from the same curve.'],
+  ['What happens at graduation?', `Every coin opens near a $${compact(OPEN_MCAP_USD, 0)} market cap. When it reaches about $${compact(GRAD_MCAP_USD, 0)}, the curve is full and anyone can migrate it into a Meteora DAMM v2 pool on Solana. That liquidity is locked forever, and trading continues on the same page and on Jupiter.`],
+  ['What do creators earn?', 'Creators pick a 1–3% trading fee. After Meteora’s share, half goes to the creator and half to Solvex. Both also earn fees from the locked liquidity after graduation.'],
+  ['Is this financial advice?', 'No. Memecoins are extremely volatile and most lose their value. Only use what you can afford to lose.'],
 ]
 
-function Column({ title, tag, coins }: { title: string; tag: string; coins: Coin[] }) {
-  return (
-    <div className="col">
-      <div className="col-head">
-        <span className={`tag tag-${tag}`}>{title}</span>
-        <span className="mono dim">{coins.length}</span>
-      </div>
-      <div className="col-list">
-        {coins.slice(0, 4).map((c) => (
-          <CoinCard key={c.pool} coin={c} />
-        ))}
-        {coins.length === 0 && <div className="empty">Nothing here yet.</div>}
-      </div>
-    </div>
-  )
-}
-
 export default function Home() {
-  const { coins } = useCoins(20000)
-  const params = useLaunchParams()
-  const [openFaq, setOpenFaq] = useState<number | null>(0)
-
-  const groups = useMemo(
-    () => ({
-      fresh: coins.filter((c) => c.status === 'new'),
-      final: coins.filter((c) => c.status === 'final').sort((a, b) => b.progress - a.progress),
-      grad: coins.filter((c) => c.status === 'graduated'),
-      locked: coins.filter((c) => !c.migrated).reduce((s, c) => s + c.reserveSvx, 0),
-    }),
-    [coins],
-  )
+  const { coins } = useCoins()
+  const { assets } = useAssets()
+  const prices = useUsdMany(coins.map((c) => c.quoteMint))
+  const stocks = assets.filter((a) => a.category === 'stock')
+  const latest = coins.slice(0, 5)
+  const top = useMemo(() => [...coins].sort((a, b) => b.progress - a.progress).slice(0, 6), [coins])
+  const graduated = coins.filter((c) => c.complete || c.migrated).length
 
   return (
-    <div className="home">
-      {/* HERO */}
-      <section className="hero">
-        <div className="hero-grid" aria-hidden />
-        <div className="wrap hero-in">
-          <div className="eyebrow">
-            <i className="live-dot" /> Launchpad live{FLIP_LIVE ? ' · powered by $FLIP' : ' · $FLIP coming soon'}
-          </div>
-          <h1>
-            The memecoin economy,
-            <br />
-            <em>on one token.</em>
-          </h1>
-          <p className="lede">
-            Solvex is a launchpad built for the memecoin economy, powered by $FLIP. Launch coins, trade them on the native
-            curve, and watch the ones that make it graduate straight onto Solana.{FLIP_LIVE ? '' : ' Markets trade in SOL until $FLIP goes live.'}
-          </p>
-          <div className="cta-row">
-            <Link to="/board" className="btn btn-primary">
-              Open the board
-            </Link>
-            <Link to="/launch" className="btn btn-ghost">
-              Launch a coin →
-            </Link>
+    <>
+      <section className="hero wrap">
+        <div className="hero-grid">
+          <div className="hero-copy">
+            <h1>Launch a coin. Pair it with anything.</h1>
+            <p>
+              Solvex launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin starts on a fair bonding curve and graduates into
+              liquidity that stays locked forever.
+            </p>
+            <div className="cta">
+              <Link to="/launch" className="btn btn-primary">
+                Launch a coin
+              </Link>
+              <Link to="/markets" className="btn btn-ghost">
+                Browse markets
+              </Link>
+            </div>
           </div>
 
-          <dl className="stats">
-            <div>
-              <dt>Currency</dt>
-              <dd>{FLIP_LIVE ? '$FLIP' : 'SOL · $FLIP soon'}</dd>
+          <div className="sky" aria-label="Latest launches">
+            <img className="sky-shape" src="/logo-shape.svg" alt="" />
+            <div className="sky-head">
+              <span>Latest launches</span>
+              <span>{coins.length ? `${coins.length} live` : 'Live on Solana'}</span>
             </div>
-            <div>
-              <dt>Curve engine</dt>
-              <dd>Meteora DBC</dd>
-            </div>
-            <div>
-              <dt>Graduates at</dt>
-              <dd>${compact(GRAD_MCAP_USD, 0)}</dd>
-            </div>
-            <div>
-              <dt>Trading fee</dt>
-              <dd>{params.fee}</dd>
-            </div>
-          </dl>
-
-          <div className="flow" aria-label="From launch to Solana">
-            {[QD, 'Launch', 'Bonding curve', 'Graduation', 'Solana · DAMM v2'].map((s, i) => (
-              <div className="flow-node" key={s}>
-                <span className="mono dim">{String(i + 1).padStart(2, '0')}</span>
-                <b>{s}</b>
+            {latest.length ? (
+              latest.map((c) => (
+                <Link key={c.pool} to={`/coin/${c.mint}`} className="sky-row">
+                  <CoinImg coin={c} size={40} />
+                  <div className="grow">
+                    <b>${c.symbol}</b>
+                    <div className="sub">
+                      {c.name} <PairTag mint={c.quoteMint} />
+                    </div>
+                  </div>
+                  <div className="r">
+                    <b>{prices[c.quoteMint] ? usd(c.mcapSvx * prices[c.quoteMint]) : compact(c.mcapSvx)}</b>
+                    <span className="muted">{ago(c.createdAt)} ago</span>
+                  </div>
+                </Link>
+              ))
+            ) : (
+              <div className="sky-empty">
+                <h3>The first launch could be yours</h3>
+                <p>New coins show up here the moment they go live on Solana.</p>
+                <Link to="/launch" className="btn btn-white">
+                  Start a launch
+                </Link>
               </div>
-            ))}
-            <div className="flow-track">
-              <i />
-            </div>
+            )}
           </div>
         </div>
-      </section>
 
-      {/* 01 LIVE */}
-      <section className="sec wrap">
-        <SecHead n="01" title="On Solvex right now" sub="Every coin on the launchpad, read straight from the chain." />
-        <div className="counters">
-          <Counter label="Coins launched" value={coins.length.toLocaleString()} />
-          <Counter label="In final stretch" value={groups.final.length.toLocaleString()} />
-          <Counter label="Graduated to Solana" value={groups.grad.length.toLocaleString()} />
-          <Counter label={`${Q} in live curves`} value={compact(groups.locked, 1)} />
-        </div>
-        <div className="cols">
-          <Column title="New pairs" tag="new" coins={groups.fresh} />
-          <Column title="Final stretch" tag="final" coins={groups.final} />
-          <Column title="Graduated" tag="grad" coins={groups.grad} />
-        </div>
-        <div className="center">
-          <Link to="/board" className="btn btn-ghost">
-            See the full board →
+        <div className="surface pairs-strip">
+          <span className="lbl">Pair with</span>
+          <div className="logos">
+            {assets.slice(0, 9).map((a) => (
+              <AssetIcon key={a.mint} asset={a} size={30} />
+            ))}
+          </div>
+          <span className="muted">SOL, USDC and {stocks.length ? `${stocks.length} tokenized stocks and ETFs` : 'tokenized stocks'}</span>
+          <Link to="/stocks" className="link">
+            See stock pairs
           </Link>
         </div>
       </section>
 
-      {/* 02 HOW */}
-      <section className="sec wrap">
-        <SecHead n="02" title="How it works" sub="Three steps from idea to Solana." />
+      <section className="section wrap">
+        <div className="surface facts">
+          <div>
+            <b>{coins.length}</b>
+            <span>Coins launched</span>
+          </div>
+          <div>
+            <b>{graduated}</b>
+            <span>Graduated to Solana</span>
+          </div>
+          <div>
+            <b>${compact(OPEN_MCAP_USD, 0)}</b>
+            <span>Opening market cap</span>
+          </div>
+          <div>
+            <b>${compact(GRAD_MCAP_USD, 0)}</b>
+            <span>Graduation market cap</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="section wrap">
+        <div className="section-head">
+          <div>
+            <h2>Closest to graduating</h2>
+            <p>Coins furthest along their bonding curve.</p>
+          </div>
+          <Link to="/markets" className="btn btn-ghost btn-sm">
+            All markets
+          </Link>
+        </div>
+        <div className="surface market-table">
+          <MarketHead />
+          {top.length ? (
+            top.map((c) => <MarketRow key={c.pool} coin={c} price={prices[c.quoteMint]} />)
+          ) : (
+            <div className="empty">
+              <h3>No markets yet</h3>
+              <p>Launch the first coin on Solvex. It takes one transaction.</p>
+              <Link to="/launch" className="btn btn-primary">
+                Launch a coin
+              </Link>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="section wrap">
+        <div className="section-head">
+          <div>
+            <h2>How a launch works</h2>
+            <p>Three steps from an idea to a coin trading on Solana.</p>
+          </div>
+        </div>
         <div className="steps">
-          <Step n="1" title={`Hold ${QD}`} body={FLIP_LIVE ? "$FLIP is the currency of the whole launchpad. Every buy, sell and first buy is paid in it." : "Every buy, sell and first buy is paid in SOL for now. $FLIP takes over as the launchpad currency when it launches."} />
-          <Step n="2" title="Launch or trade" body="Launch a coin with an image, name and ticker, or trade any coin on its bonding curve. Price moves with every trade." />
-          <Step n="3" title="Graduate to Solana" body={`At ${params.threshold} the curve completes and liquidity migrates to a locked Meteora DAMM v2 pool on Solana.`} />
+          <div className="surface step">
+            <h3>Create your coin</h3>
+            <p>Add an image, a name and a ticker, then pick a pair: SOL, USDC or a tokenized stock. One transaction creates the coin and its market.</p>
+          </div>
+          <div className="surface step">
+            <h3>Trade on the curve</h3>
+            <p>Anyone can buy and sell straight away. The price follows Meteora’s bonding curve, and you earn half of every trading fee.</p>
+          </div>
+          <div className="surface step">
+            <h3>Graduate to Solana</h3>
+            <p>At about ${compact(GRAD_MCAP_USD, 0)} the curve fills. One click moves it into a locked Meteora pool, and it keeps trading here and on Jupiter.</p>
+          </div>
         </div>
       </section>
 
-      {/* 03 WHY */}
-      <section className="sec wrap">
-        <SecHead n="03" title="Why Solvex" sub="A launchpad with its own economy." />
-        <div className="cards">
-          <Card k="Currency" title="One token underneath" body={FLIP_LIVE ? "All pairs are quoted in $FLIP, so volume on every coin is demand for the same asset." : "Pairs are quoted in SOL today. When $FLIP launches, new pairs are quoted in it, so volume on every coin becomes demand for $FLIP."} />
-          <Card k="Curve" title="Fair launch, every time" body="No presale, no team bag. Everyone buys from the same Meteora bonding curve." />
-          <Card k="Fees" title={`Creators earn ${params.creatorShare}`} body={`of the ${params.fee} trading fee on their coin, claimable whenever they like.`} />
-          <Card k="Liquidity" title="Locked at graduation" body="The LP created when a coin graduates is permanently locked. It can't be pulled." />
-          <Card k="Bridge" title="Born here, listed on Solana" body="Graduated coins land in a DAMM v2 pool and become tradable on Jupiter and every Solana aggregator." />
-          <Card k="Keys" title="Your wallet, your coins" body="Non-custodial. You sign every transaction; Solvex never holds your funds." />
+      <section className="section wrap">
+        <div className="section-head">
+          <div>
+            <h2>Questions</h2>
+          </div>
         </div>
-      </section>
-
-      {/* 04 LOOP */}
-      <section className="sec wrap">
-        <SecHead n="04" title="The loop" sub={FLIP_LIVE ? "How activity on Solvex feeds back into $FLIP." : "How activity on Solvex will feed back into $FLIP once it is live."} />
-        <ol className="loop">
-          <li><b>Coins launch</b> priced in $FLIP</li>
-          <li><b>Traders buy</b> with $FLIP on the curve</li>
-          <li><b>Fees accrue</b> to creators and the protocol</li>
-          <li><b>Winners graduate</b> pairing $FLIP liquidity on Solana</li>
-          <li><b>More demand</b> for $FLIP, more launches</li>
-        </ol>
-      </section>
-
-      {/* 05 FAQ */}
-      <section className="sec wrap">
-        <SecHead n="05" title="Answers" sub="The short version." />
         <div className="faq">
           {FAQ.map(([q, a], i) => (
-            <div key={q} className={`faq-item ${openFaq === i ? 'open' : ''}`}>
-              <button onClick={() => setOpenFaq(openFaq === i ? null : i)}>
-                <span>{q}</span>
-                <span className="mono">{openFaq === i ? '–' : '+'}</span>
-              </button>
-              {openFaq === i && <p>{a}</p>}
-            </div>
+            <details key={q} open={i === 0}>
+              <summary>{q}</summary>
+              <p>{a}</p>
+            </details>
           ))}
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="final-cta">
-        <div className="wrap">
-          <h2>
-            One token.
-            <br />
-            <em>An entire ecosystem.</em>
-          </h2>
-          <div className="cta-row">
-            <Link to="/board" className="btn btn-dark">
-              Open the board
-            </Link>
-            <Link to="/launch" className="btn btn-outline-dark">
-              Launch a coin
-            </Link>
-          </div>
+      <section className="closing">
+        <div className="wrap closing-in">
+          <h2>Your coin, on Solana, in one transaction.</h2>
+          <Link to="/launch" className="btn btn-white">
+            Launch a coin
+          </Link>
         </div>
       </section>
-    </div>
+    </>
   )
 }
-
-function SecHead({ n, title, sub }: { n: string; title: string; sub: string }) {
-  return (
-    <div className="sec-head">
-      <span className="sec-n mono">{n}</span>
-      <div>
-        <h2>{title}</h2>
-        <p>{sub}</p>
-      </div>
-    </div>
-  )
-}
-const Counter = ({ label, value }: { label: string; value: string }) => (
-  <div className="counter">
-    <b className="mono">{value}</b>
-    <span>{label}</span>
-  </div>
-)
-const Step = ({ n, title, body }: { n: string; title: string; body: string }) => (
-  <div className="step">
-    <span className="step-n">{n}</span>
-    <h3>{title}</h3>
-    <p>{body}</p>
-  </div>
-)
-const Card = ({ k, title, body }: { k: string; title: string; body: string }) => (
-  <div className="card">
-    <span className="mono dim">{k}</span>
-    <h3>{title}</h3>
-    <p>{body}</p>
-  </div>
-)
