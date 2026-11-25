@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { Coin } from '../lib/dbc'
+import { Q } from '../lib/config'
 import { ago, compact, pct } from '../lib/format'
 
 export function CoinAvatar({ coin, size = 52 }: { coin: Coin; size?: number }) {
@@ -32,7 +33,7 @@ export default function CoinCard({ coin }: { coin: Coin }) {
         </div>
         <div className="coin-stats mono">
           <span>
-            MC <b>{compact(coin.mcapSvx)}</b> FLIP
+            MC <b>{compact(coin.mcapSvx)}</b> {Q}
           </span>
           <span>{coin.status === 'graduated' ? 'on Solana' : pct(coin.progress)}</span>
         </div>

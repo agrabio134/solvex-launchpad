@@ -8,8 +8,8 @@
   --paper: #1c1a16;
   --paper-2: #47423a;
   --dim: #716a5e;
-  --accent: #ee5418;
-  --accent-2: #ff7337;
+  --accent: #3b62d0;
+  --accent-2: #5d84e6;
   --mint: #15965a;
   --red: #d8344a;
   --r: 14px;
@@ -122,7 +122,7 @@ main { min-height: 70vh; }
 .btn-dark { background: var(--paper); color: #fff; }
 .btn-dark:hover { background: #000; }
 .btn-outline-dark { border: 1.5px solid #fff; color: #fff; }
-.btn-outline-dark:hover { background: #fff; color: var(--paper); }
+.btn-outline-dark:hover { background: #fff; color: var(--accent); }
 .btn-block { width: 100%; }
 .btn-sm { height: 32px; padding: 0 14px; font-size: 13px; }
 .link-btn { color: var(--accent); font-weight: 700; font-size: 14px; align-self: flex-start; }
@@ -155,7 +155,7 @@ textarea.input { resize: vertical; }
 .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
 .hero::before {
   content: ''; position: absolute; width: 900px; height: 900px; right: -300px; top: -380px;
-  background: radial-gradient(circle, rgba(238, 84, 24, 0.16), transparent 62%);
+  background: radial-gradient(circle, rgba(91, 132, 230, 0.22), transparent 62%);
   pointer-events: none;
 }
 .hero-grid {
@@ -206,7 +206,7 @@ textarea.input { resize: vertical; }
 
 .tag { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 10px; border-radius: 999px; font-weight: 500; }
 .tag-new { background: var(--ink-3); color: var(--paper); }
-.tag-final { background: rgba(238, 84, 24, 0.12); color: var(--accent); }
+.tag-final { background: rgba(59, 98, 208, 0.1); color: var(--accent); }
 .tag-grad { background: rgba(21, 150, 90, 0.12); color: var(--mint); }
 
 .coin { display: flex; gap: 12px; padding: 10px; border-radius: 12px; background: var(--ink); border: 1px solid var(--ink-3); transition: border-color 0.15s, transform 0.15s; }
@@ -254,9 +254,9 @@ textarea.input { resize: vertical; }
 .faq-item button .mono { color: var(--accent); font-size: 20px; }
 .faq-item p { color: var(--dim); padding: 0 40px 22px 0; max-width: 720px; }
 
-.final-cta { margin-top: 120px; background: var(--accent); color: #fff; padding: 100px 0; }
+.final-cta { margin-top: 120px; background: linear-gradient(180deg, #3a5aa6 0%, #6f93de 100%); color: #fff; padding: 100px 0; }
 .final-cta h2 { font-size: clamp(38px, 6vw, 80px); font-weight: 800; letter-spacing: -0.04em; }
-.final-cta em { color: var(--paper); -webkit-text-stroke: 0; }
+.final-cta em { color: #dde2ea; -webkit-text-stroke: 0; }
 
 /* ---------- footer ---------- */
 .ftr { border-top: 1px solid var(--line); }

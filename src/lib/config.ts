@@ -14,8 +14,13 @@ const pk = (v?: string) => {
 export const RPC_URL: string = env.VITE_RPC_URL || `${window.location.origin}/api/rpc`
 export const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 
-/** $FLIP: the quote currency of every Solvex market. */
+/** $FLIP mint, once $FLIP is live. Until then markets are paired with SOL. */
 export const FLIP_MINT = pk(env.VITE_FLIP_MINT || env.VITE_SVX_MINT)
+export const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111112')
+/** Quote currency of every market: $FLIP when configured, otherwise SOL. */
+export const QUOTE_MINT = FLIP_MINT ?? WSOL_MINT
+export const Q = FLIP_MINT ? 'FLIP' : 'SOL'
+export const FLIP_LIVE = !!FLIP_MINT
 /** Platform wallet: fee claimer + leftover receiver on every launch config. Markets are discovered by it. */
 export const PLATFORM_WALLET = pk(env.VITE_PLATFORM_WALLET) ?? new PublicKey('C1rdVXhfUe3RDNxMFrGYSHN6MpkhjTLhVaBk3ZpMJWnT')
 
@@ -35,7 +40,7 @@ export const TG_URL: string = env.VITE_TG_URL || ''
  */
 export const LISTED_AFTER = Number(env.VITE_LISTED_AFTER || 1795616000)
 
-export const CONFIGURED = !!FLIP_MINT
+export const CONFIGURED = true
 
 /** Progress share at which a coin moves from New Pairs to Final Stretch. */
 export const FINAL_STRETCH_AT = 0.6

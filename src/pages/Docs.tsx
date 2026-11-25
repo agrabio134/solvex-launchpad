@@ -6,7 +6,8 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'overview',
     title: 'Overview',
     body: [
-      'Solvex is a memecoin launchpad powered entirely by $FLIP. Every coin launched here is paired against $FLIP, so every trade on the platform runs through one token.',
+      'Solvex is a memecoin launchpad powered by $FLIP. Every coin launched here is paired against the launchpad currency, so every trade on the platform runs through one token.',
+      'Until $FLIP launches, markets are paired with SOL. Once $FLIP is live, new launches are paired with $FLIP.',
       'Coins are created on Meteora’s Dynamic Bonding Curve (DBC) program. Each launch creates its own curve config and market in one transaction, paired with $FLIP, with the Solvex platform wallet as fee partner.',
     ],
   },

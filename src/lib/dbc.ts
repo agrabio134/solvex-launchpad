@@ -44,8 +44,9 @@ import {
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import {
   FINAL_STRETCH_AT,
-  FLIP_MINT,
   LISTED_AFTER,
+  QUOTE_MINT,
+  WSOL_MINT,
   GRAD_MCAP_FLIP,
   GRAD_MCAP_USD,
   MAINNET_GENESIS,
@@ -131,9 +132,8 @@ let _lp: Promise<Launchpad> | null = null
 export function getLaunchpad(connection: Connection): Promise<Launchpad> {
   if (!_lp) {
     _lp = (async () => {
-      if (!FLIP_MINT) throw new Error('VITE_FLIP_MINT is not set')
-      const m = await mintInfo(connection, FLIP_MINT)
-      return { quoteMint: FLIP_MINT, quoteDecimals: m.decimals, quoteProgram: m.program }
+      const m = await mintInfo(connection, QUOTE_MINT)
+      return { quoteMint: QUOTE_MINT, quoteDecimals: m.decimals, quoteProgram: m.program }
     })()
     _lp.catch(() => (_lp = null))
   }
@@ -147,9 +147,8 @@ export async function assertMainnet(connection: Connection) {
 /* --------------------------------------------------------- $FLIP price */
 
 export async function fetchFlipUsd(): Promise<number | null> {
-  if (!FLIP_MINT) return null
   try {
-    const r = await fetch(`/api/market-data?mint=${FLIP_MINT.toBase58()}`, { signal: AbortSignal.timeout(12000) })
+    const r = await fetch(`/api/market-data?mint=${QUOTE_MINT.toBase58()}`, { signal: AbortSignal.timeout(12000) })
     const j = await r.json()
     return r.ok && Number.isFinite(j.usd) && j.usd > 0 ? j.usd : null
   } catch {
@@ -162,7 +161,7 @@ export async function launchCaps() {
   const usd = await fetchFlipUsd()
   if (usd) return { initialCap: OPEN_MCAP_USD / usd, graduationCap: GRAD_MCAP_USD / usd, usd }
   if (OPEN_MCAP_FLIP > 0 && GRAD_MCAP_FLIP > OPEN_MCAP_FLIP) return { initialCap: OPEN_MCAP_FLIP, graduationCap: GRAD_MCAP_FLIP, usd: null }
-  throw new Error('No live $FLIP price yet, so launch size cannot be set. Try again shortly.')
+  throw new Error('No live price for the quote token yet, so launch size cannot be set. Try again shortly.')
 }
 
 /* --------------------------------------------------------- metadata */
@@ -293,7 +292,7 @@ async function platformConfigs(connection: Connection) {
   if (!_cfgs || Date.now() - _cfgs.at > 20000) {
     const list = sdk(connection)
       .dbc.state.getPoolConfigsByOwner(PLATFORM_WALLET)
-      .then((all) => all.filter((c) => FLIP_MINT && c.account.quoteMint.equals(FLIP_MINT)).map((c) => ({ key: c.publicKey, config: c.account })))
+      .then((all) => all.filter((c) => c.account.quoteMint.equals(QUOTE_MINT)).map((c) => ({ key: c.publicKey, config: c.account })))
     _cfgs = { at: Date.now(), list }
     list.catch(() => (_cfgs = null))
   }
@@ -315,7 +314,7 @@ export async function fetchCoins(connection: Connection): Promise<Coin[]> {
 
 async function rowFor(connection: Connection, poolKey: PublicKey, pool: VirtualPool): Promise<Row | null> {
   const config = await sdk(connection).dbc.state.getPoolConfig(pool.poolState.config)
-  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET) || !FLIP_MINT || !config.quoteMint.equals(FLIP_MINT)) return null
+  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET) || !config.quoteMint.equals(QUOTE_MINT)) return null
   return { key: poolKey, pool, config }
 }
 
@@ -366,7 +365,7 @@ export interface Trade {
 }
 
 /** Recent swaps (curve, or DAMM v2 once migrated), rebuilt from the trader's balance changes. Newest first. */
-export async function fetchTrades(connection: Connection, coin: Coin, limit = 40): Promise<Trade[]> {
+export async function fetchTrades(connection: Connection, coin: Coin, limit = 20): Promise<Trade[]> {
   const lp = await getLaunchpad(connection)
   const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.tradingPool), { limit })).filter((s) => !s.err)
   const txs: (ParsedTransactionWithMeta | null)[] = []
@@ -619,9 +618,13 @@ export async function tokenBalance(connection: Connection, owner: PublicKey, min
   }
 }
 
+/** Spendable quote balance: native SOL (minus a small fee reserve) or the $FLIP token balance. */
 export async function svxBalance(connection: Connection, owner: PublicKey) {
-  const lp = await getLaunchpad(connection)
-  return tokenBalance(connection, owner, lp.quoteMint)
+  if (QUOTE_MINT.equals(WSOL_MINT)) {
+    const lamports = await connection.getBalance(owner).catch(() => 0)
+    return Math.max(0, lamports / 1e9 - 0.01)
+  }
+  return tokenBalance(connection, owner, QUOTE_MINT)
 }
 
 /* ------------------------------------------------------------ submit */

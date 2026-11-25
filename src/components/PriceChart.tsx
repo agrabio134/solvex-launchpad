@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AreaSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
 import type { Trade } from '../lib/dbc'
+import { Q } from '../lib/config'
 
 /**
  * Price line from on-chain trades plus the live pool price.
@@ -21,13 +22,13 @@ export default function PriceChart({ trades, current, usd, symbol }: { trades: T
       grid: { vertLines: { visible: false }, horzLines: { color: '#efebe3' } },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
-      crosshair: { vertLine: { color: '#ee541855' }, horzLine: { color: '#ee541855' } },
+      crosshair: { vertLine: { color: '#3b62d055' }, horzLine: { color: '#3b62d055' } },
     })
     chart.current = c
     series.current = c.addSeries(AreaSeries, {
-      lineColor: '#ee5418',
-      topColor: 'rgba(238,84,24,0.25)',
-      bottomColor: 'rgba(238,84,24,0.02)',
+      lineColor: '#3b62d0',
+      topColor: 'rgba(59,98,208,0.25)',
+      bottomColor: 'rgba(59,98,208,0.02)',
       lineWidth: 2,
       priceFormat: { type: 'price', precision: 10, minMove: 0.0000000001 },
     })
@@ -61,7 +62,7 @@ export default function PriceChart({ trades, current, usd, symbol }: { trades: T
     <div className="chart">
       <div className="chart-top mono small">
         <span>
-          {symbol} / {usd ? 'USD' : 'FLIP'}
+          {symbol} / {usd ? 'USD' : Q}
         </span>
         <span className="dim">{trades.length} recent trades</span>
       </div>

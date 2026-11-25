@@ -95,7 +95,7 @@ export function LaunchpadProvider({ children }: { children: ReactNode }) {
     let alive = true
     const go = () =>
       getLaunchpad(connection)
-        .then((lp) => alive && setState((s) => ({ ...s, lp, error: null, svxMint: lp.quoteMint.toBase58() })))
+        .then((lp) => alive && setState((s) => ({ ...s, lp, error: null })))
         .catch((e) => {
           if (!alive) return
           setState((s) => ({ ...s, error: e?.message || 'Could not load launchpad config' }))

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { buildClaimFees, fetchCoins, fetchCoinsByCreator, svxBalance, type Coin } from '../lib/dbc'
-import { PLATFORM_WALLET } from '../lib/config'
+import { PLATFORM_WALLET, Q } from '../lib/config'
 import { compact, pct } from '../lib/format'
 import { errMsg, useSubmit } from '../lib/hooks'
 import { useToast } from '../components/Toast'
@@ -73,9 +73,9 @@ export default function Profile() {
       </div>
 
       <div className="kpis">
-        <div className="kpi"><span className="dim small">FLIP balance</span><b className="mono">{compact(flip)}</b></div>
+        <div className="kpi"><span className="dim small">{Q} balance</span><b className="mono">{compact(flip)}</b></div>
         <div className="kpi"><span className="dim small">{isPlatform ? 'Markets' : 'Coins launched'}</span><b className="mono">{coins?.length ?? '—'}</b></div>
-        <div className="kpi"><span className="dim small">Unclaimed fees</span><b className="mono">{compact(total)} FLIP</b></div>
+        <div className="kpi"><span className="dim small">Unclaimed fees</span><b className="mono">{compact(total)}&nbsp;{Q}</b></div>
       </div>
 
       <div className="panel">
@@ -106,12 +106,12 @@ export default function Profile() {
                         <b>${c.symbol}</b>
                       </Link>
                     </td>
-                    <td className="mono">{compact(c.mcapSvx)} FLIP</td>
+                    <td className="mono">{compact(c.mcapSvx)}&nbsp;{Q}</td>
                     <td style={{ minWidth: 120 }}>
                       <Progress value={c.progress} graduated={c.complete} />
                       <span className="mono small dim">{c.migrated ? 'on Solana' : c.complete ? 'ready to migrate' : pct(c.progress)}</span>
                     </td>
-                    <td className="mono">{compact(feeOf(c))} FLIP</td>
+                    <td className="mono">{compact(feeOf(c))}&nbsp;{Q}</td>
                     <td className="right">
                       <button className="btn btn-ghost btn-sm" disabled={busy === c.pool || feeOf(c) <= 0} onClick={() => claim(c)}>
                         {busy === c.pool ? '…' : 'Claim'}

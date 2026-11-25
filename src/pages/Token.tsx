@@ -16,21 +16,21 @@ import {
   type Prepared,
   type Trade,
 } from '../lib/dbc'
-import { PLATFORM_WALLET, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
+import { PLATFORM_WALLET, Q, QUOTE_MINT, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
 import { errMsg, useLaunchpad, useSubmit } from '../lib/hooks'
 import { useToast } from '../components/Toast'
 import { CoinAvatar, Progress } from '../components/CoinCard'
 import PriceChart from '../components/PriceChart'
 
-const PRESETS = { buy: ['100', '500', '1000', '5000'], sell: ['25%', '50%', '75%', '100%'] }
+const PRESETS = { buy: Q === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['100', '500', '1000', '5000'], sell: ['25%', '50%', '75%', '100%'] }
 
 export default function Token() {
   const { id = '' } = useParams()
   const { connection } = useConnection()
   const { publicKey } = useWallet()
   const { setVisible } = useWalletModal()
-  const { svxMint, usd } = useLaunchpad()
+  const { usd } = useLaunchpad()
   const submit = useSubmit()
   const toast = useToast()
 
@@ -130,7 +130,7 @@ export default function Token() {
     run('Preparing…', async () => {
       const n = Number(amount)
       if (!n) return
-      if (side === 'buy' && n > bal.svx) throw new Error('Not enough FLIP')
+      if (side === 'buy' && n > bal.svx) throw new Error(`Not enough ${Q}`)
       if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
       const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
       return submit(p.tx, [], setStatus)
@@ -196,9 +196,9 @@ export default function Token() {
       <div className="token-grid">
         <div className="token-main">
           <div className="kpis">
-            <Kpi label="Price" value={usd ? `$${price(coin.priceSvx * usd)}` : `${price(coin.priceSvx)} FLIP`} />
-            <Kpi label="Market cap" value={usd ? `$${compact(coin.mcapSvx * usd)}` : `${compact(coin.mcapSvx)} FLIP`} />
-            <Kpi label="In curve" value={`${compact(coin.reserveSvx)} FLIP`} />
+            <Kpi label="Price" value={usd ? `$${price(coin.priceSvx * usd)}` : `${price(coin.priceSvx)} ${Q}`} />
+            <Kpi label="Market cap" value={usd ? `$${compact(coin.mcapSvx * usd)}` : `${compact(coin.mcapSvx)} ${Q}`} />
+            <Kpi label="In curve" value={`${compact(coin.reserveSvx)} ${Q}`} />
             <Kpi label="Age" value={ago(coin.createdAt)} />
           </div>
 
@@ -217,7 +217,7 @@ export default function Token() {
                 ? 'Graduated. Liquidity sits in a locked Meteora DAMM v2 pool on Solana, and trades here route through it.'
                 : coin.complete
                   ? 'The curve is full. Anyone can migrate it to Solana; trading resumes there right after.'
-                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} FLIP more and $${coin.symbol} graduates to Solana.`}
+                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} ${Q} more and $${coin.symbol} graduates to Solana.`}
             </p>
           </div>
 
@@ -244,7 +244,7 @@ export default function Token() {
                     <tr>
                       <th>Age</th>
                       <th>Type</th>
-                      <th>FLIP</th>
+                      <th>{Q}</th>
                       <th>{coin.symbol}</th>
                       <th>Price</th>
                       <th>Trader</th>
@@ -297,10 +297,10 @@ export default function Token() {
                   Sell
                 </button>
               </div>
-              <div className="bal dim small mono">Balance: {side === 'buy' ? `${compact(bal.svx)} FLIP` : `${compact(bal.token)} ${coin.symbol}`}</div>
+              <div className="bal dim small mono">Balance: {side === 'buy' ? `${compact(bal.svx)} ${Q}` : `${compact(bal.token)} ${coin.symbol}`}</div>
               <div className="input-suffix">
                 <input className="input mono big" inputMode="decimal" placeholder="0.0" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} />
-                <i>{side === 'buy' ? 'FLIP' : coin.symbol}</i>
+                <i>{side === 'buy' ? Q : coin.symbol}</i>
               </div>
               <div className="presets">
                 {PRESETS[side].map((p) => (
@@ -312,7 +312,7 @@ export default function Token() {
               <div className="quote mono small">
                 <div>
                   <span className="dim">You receive</span>
-                  <span>{quoting ? '…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : 'FLIP'}` : '—'}</span>
+                  <span>{quoting ? '…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : Q}` : '—'}</span>
                 </div>
                 <div>
                   <span className="dim">Minimum</span>
@@ -341,8 +341,8 @@ export default function Token() {
               <button className={`btn btn-block ${side === 'buy' ? 'btn-primary' : 'btn-sell'}`} disabled={!!publicKey && (busy || !Number(amount))} onClick={trade}>
                 {!publicKey ? 'Connect wallet' : status || (side === 'buy' ? `Buy $${coin.symbol}` : `Sell $${coin.symbol}`)}
               </button>
-              {coin.migrated && svxMint && (
-                <a className="dim small center-link" href={jupiterSwap(svxMint, coin.mint)} target="_blank" rel="noreferrer">
+              {coin.migrated && (
+                <a className="dim small center-link" href={jupiterSwap(QUOTE_MINT.toBase58(), coin.mint)} target="_blank" rel="noreferrer">
                   Also tradable on Jupiter ↗
                 </a>
               )}
@@ -352,7 +352,7 @@ export default function Token() {
           {(isCreator || isPlatform) && (
             <div className="panel">
               <b>{isPlatform ? 'Platform fees' : 'Creator fees'}</b>
-              <p className="mono big-num">{compact(isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx)} FLIP</p>
+              <p className="mono big-num">{compact(isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx)}&nbsp;{Q}</p>
               <button className="btn btn-ghost btn-block" disabled={busy || (isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx) <= 0} onClick={claim}>
                 Claim curve fees
               </button>
@@ -368,7 +368,7 @@ export default function Token() {
             <div className="kv"><span className="dim">Creator</span><a href={explorerAddr(coin.creator)} target="_blank" rel="noreferrer" className="mono">{short(coin.creator)}</a></div>
             <div className="kv"><span className="dim">Curve</span><a href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer" className="mono">{short(coin.pool)}</a></div>
             {coin.migrated && <div className="kv"><span className="dim">DAMM v2 pool</span><a href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer" className="mono">{short(coin.tradingPool)}</a></div>}
-            <div className="kv"><span className="dim">Graduates at</span><span className="mono">{compact(coin.thresholdSvx)} FLIP</span></div>
+            <div className="kv"><span className="dim">Graduates at</span><span className="mono">{compact(coin.thresholdSvx)}&nbsp;{Q}</span></div>
           </div>
         </aside>
       </div>

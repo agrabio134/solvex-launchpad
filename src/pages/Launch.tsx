@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { buildLaunch, fetchCoin, launchCaps, prepareSwap, svxBalance } from '../lib/dbc'
-import { GRAD_MCAP_USD, OPEN_MCAP_USD } from '../lib/config'
+import { GRAD_MCAP_USD, OPEN_MCAP_USD, Q } from '../lib/config'
 import { errMsg, useSubmit } from '../lib/hooks'
 import { fileToDataUrl, uploadMetadata } from '../lib/upload'
 import { validateLaunch } from '../lib/validation'
@@ -68,7 +68,7 @@ export default function Launch() {
   const go = async () => {
     if (!publicKey) return setVisible(true)
     if (!valid) return
-    if (bal !== null && buy > bal) return toast('err', `First buy is more than your ${compact(bal)} FLIP`)
+    if (bal !== null && buy > bal) return toast('err', `First buy is more than your ${compact(bal)} ${Q}`)
     try {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({
@@ -114,7 +114,7 @@ export default function Launch() {
       <div className="page-head">
         <div>
           <h1>Launch a coin</h1>
-          <p className="dim">Priced in $FLIP from the first trade. Graduates to a locked Meteora pool on Solana when the curve fills.</p>
+          <p className="dim">Priced in {Q} from the first trade. Graduates to a locked Meteora pool on Solana when the curve fills.</p>
         </div>
       </div>
 
@@ -208,11 +208,11 @@ export default function Launch() {
 
           <label className="field">
             <span>
-              First buy <small className="dim">optional · in $FLIP{bal !== null ? ` · balance ${compact(bal)}` : ''}</small>
+              First buy <small className="dim">optional · in {Q}{bal !== null ? ` · balance ${compact(bal)}` : ''}</small>
             </span>
             <div className="input-suffix">
               <input className="input mono" inputMode="decimal" value={firstBuy} onChange={(e) => setFirstBuy(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
-              <i>FLIP</i>
+              <i>{Q}</i>
             </div>
           </label>
 
@@ -246,7 +246,7 @@ export default function Launch() {
           </div>
           {caps && (
             <p className="dim small mono">
-              ≈ {compact(caps.initialCap)} → {compact(caps.graduationCap)} FLIP{caps.usd ? ` at $${caps.usd.toPrecision(3)}` : ''}
+              ≈ {compact(caps.initialCap)} → {compact(caps.graduationCap)} {Q}{caps.usd ? ` at $${caps.usd.toPrecision(3)}` : ''}
             </p>
           )}
           {capsErr && <p className="down small">{capsErr}</p>}
