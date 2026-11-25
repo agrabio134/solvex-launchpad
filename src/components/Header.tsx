@@ -39,7 +39,7 @@ export default function Header() {
           >
             <b>$FLIP</b> {flip ? (copied ? 'Copied' : short(flip)) : 'soon'}
           </button>
-          <span className="pill" title="Latest Solana slot">
+          <span className="pill slot" title="Latest Solana slot">
             <i className="dot" />
             {slot ? slot.toLocaleString() : 'Connecting'}
           </span>
