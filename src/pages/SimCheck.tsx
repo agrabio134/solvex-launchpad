@@ -28,8 +28,19 @@ export default function SimCheck() {
     }
     ;(async () => {
       try {
-        const payer = PLATFORM_WALLET
-        push({ payer: payer.toBase58(), sol: (await connection.getBalance(payer)) / 1e9 })
+        push({ platformSol: (await connection.getBalance(PLATFORM_WALLET)) / 1e9 })
+        // simulation-only payer: a recently active DBC trader with SOL (nothing is signed or sent)
+        const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+        let payer = PLATFORM_WALLET
+        for (const s of await connection.getSignaturesForAddress(DBC, { limit: 15 })) {
+          const t = await connection.getTransaction(s.signature, { maxSupportedTransactionVersion: 0 }).catch(() => null)
+          const k = t?.transaction.message.staticAccountKeys[0]
+          if (k && (await connection.getBalance(k)) > 2e9) {
+            payer = k
+            break
+          }
+        }
+        push({ simPayer: payer.toBase58(), sol: (await connection.getBalance(payer)) / 1e9 })
         const l = await buildLaunch(connection, payer, { name: 'Sim Test Coin', symbol: 'SIMT', uri: 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/49BmchtwCyRYj.json', feeBps: 100, dynamic: true, shield: true })
         push({ caps: l.caps })
         await sim('LAUNCH (config + pool, shield+dynamic)', l.tx, payer, l.signers)
