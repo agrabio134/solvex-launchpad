@@ -183,7 +183,14 @@ function parseMetaplex(data: Buffer) {
   return { name: str(32), symbol: str(10), uri: str(200) }
 }
 
-const ipfs = (u: string) => (u?.startsWith('ipfs://') ? `https://ipfs.io/ipfs/${u.slice(7)}` : u)
+/** IPFS links (ipfs://, ipfs.io/ipfs/…) go through a gateway that serves browsers reliably. */
+const IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/'
+const ipfs = (u: string) => {
+  if (!u) return u
+  if (u.startsWith('ipfs://')) return IPFS_GATEWAY + u.slice(7)
+  const m = /^https?:\/\/[^/]+\/ipfs\/(.+)$/.exec(u)
+  return m ? IPFS_GATEWAY + m[1] : u
+}
 const jsonCache = new Map<string, Promise<any>>()
 function fetchJson(uri: string) {
   const u = ipfs(uri)
@@ -342,6 +349,8 @@ export async function fetchCoinsByCreator(connection: Connection, creator: Publi
 
 /* ------------------------------------------------------------ trades */
 
+const WSOL = 'So11111111111111111111111111111111111111112'
+
 export interface Trade {
   sig: string
   time: number
@@ -373,7 +382,12 @@ export async function fetchTrades(connection: Connection, coin: Coin, limit = 50
       return sum(meta.postTokenBalances ?? []) - sum(meta.preTokenBalances ?? [])
     }
     const dTok = delta(coin.mint)
-    const dQ = delta(quote)
+    let dQ = delta(quote)
+    // wrapped SOL is opened and closed inside the swap, so read the trader's lamports instead
+    if (!dQ && quote === WSOL) {
+      const idx = tx.transaction.message.accountKeys.findIndex((k) => k.pubkey.toBase58() === trader)
+      if (idx >= 0) dQ = (meta.postBalances[idx] - meta.preBalances[idx] + (idx === 0 ? meta.fee : 0)) / 1e9
+    }
     if (!dTok || !dQ || Math.sign(dTok) === Math.sign(dQ)) return
     const tokens = Math.abs(dTok)
     const svx = Math.abs(dQ)

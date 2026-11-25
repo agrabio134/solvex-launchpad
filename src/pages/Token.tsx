@@ -319,7 +319,7 @@ export default function Token() {
                   <span>{quote ? compact(quote.minOut) : '—'}</span>
                 </div>
                 <div>
-                  <span className="dim">Price impact</span>
+                  <span className="dim">Price impact + fee</span>
                   <span className={quote?.priceImpact && quote.priceImpact > 5 ? 'down' : ''}>{quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : '—'}</span>
                 </div>
                 <div>
