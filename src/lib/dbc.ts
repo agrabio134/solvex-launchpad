@@ -669,18 +669,34 @@ export type SignTx = <T extends Transaction | VersionedTransaction>(tx: T) => Pr
  * Mainnet check → compute budget → partial-sign extra signers → size check → simulate →
  * wallet signs (contents verified unchanged) → send → poll for confirmation.
  */
-export async function submit(connection: Connection, owner: PublicKey, signTransaction: SignTx, tx: Transaction, signers: Keypair[], onStatus: (s: string) => void) {
-  await assertMainnet(connection)
+/**
+ * Builds the exact transaction the wallet will sign. Launches (extra signers, near the 1232-byte limit)
+ * carry no compute-budget instructions: they fit the default compute limit. Migration keeps a raised limit.
+ */
+export function compileForWallet(tx: Transaction, payer: PublicKey, blockhash: string, signers: Keypair[], budget: 'swap' | 'launch' | 'migrate') {
   const fresh = new Transaction().add(...tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId)))
-  const latest = await connection.getLatestBlockhash('confirmed')
-  fresh.feePayer = owner
-  fresh.recentBlockhash = latest.blockhash
-  fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
-  // launch / migration txs carry extra signers and sit near the size limit, so they skip the priority-fee instruction
-  if (!signers.length) fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+  fresh.feePayer = payer
+  fresh.recentBlockhash = blockhash
+  if (budget === 'swap') fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+  if (budget === 'migrate') fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
   const vtx = new VersionedTransaction(fresh.compileMessage())
   if (signers.length) vtx.sign(signers)
-  if (vtx.serialize().length > 1232) throw new Error('Transaction is too large. Use a shorter name or ticker.')
+  return vtx
+}
+
+export async function submit(
+  connection: Connection,
+  owner: PublicKey,
+  signTransaction: SignTx,
+  tx: Transaction,
+  signers: Keypair[],
+  onStatus: (s: string) => void,
+  budget: 'swap' | 'launch' | 'migrate' = signers.length ? 'launch' : 'swap',
+) {
+  await assertMainnet(connection)
+  const latest = await connection.getLatestBlockhash('confirmed')
+  const vtx = compileForWallet(tx, owner, latest.blockhash, signers, budget)
+  if (vtx.serialize().length > 1232) throw new Error('This launch is too large for one Solana transaction. Use a shorter name or ticker.')
 
   onStatus('Simulating on mainnet…')
   const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed', replaceRecentBlockhash: false })

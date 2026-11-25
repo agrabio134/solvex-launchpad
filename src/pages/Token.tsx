@@ -283,7 +283,7 @@ export default function Token() {
             <div className="surface pad stack">
               <h3>Ready to graduate</h3>
               <p className="muted">Migrating moves the curve’s liquidity into a locked Meteora DAMM v2 pool so trading continues on Solana. Anyone can do it and only pays network fees.</p>
-              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={() => run('Preparing migration…', async () => { const m = await buildMigrate(connection, coin, publicKey!); return submit(m.tx, m.signers, setStatus) }, 'Migrated to Solana')}>
+              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={() => run('Preparing migration…', async () => { const m = await buildMigrate(connection, coin, publicKey!); return submit(m.tx, m.signers, setStatus, 'migrate') }, 'Migrated to Solana')}>
                 {!publicKey ? 'Connect wallet' : status || 'Migrate to Solana'}
               </button>
             </div>
