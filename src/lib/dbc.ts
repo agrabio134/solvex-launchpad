@@ -117,7 +117,7 @@ let _assets: Promise<{ assets: Asset[]; error?: string }> | null = null
 /** SOL, USDC, $FLIP (when live) and the xStocks tokenized-stock catalogue. */
 export function fetchAssets(): Promise<{ assets: Asset[]; error?: string }> {
   if (!_assets) {
-    _assets = fetch('/api/assets', { signal: AbortSignal.timeout(20000) })
+    _assets = fetch('/api/assets', { signal: AbortSignal.timeout(45000) })
       .then((r) => r.json())
       .then((d) => ({ assets: d.assets?.length ? d.assets : CORE_ASSETS, error: d.error }))
       .catch(() => ({ assets: CORE_ASSETS, error: 'Stock catalogue unavailable right now.' }))
