@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
 import { ComputeBudgetProgram, PublicKey, Transaction, VersionedTransaction, type Keypair } from '@solana/web3.js'
-import { buildLaunch, buildMigrate, fetchCoins, prepareSwap, tokenBalance } from '../lib/dbc'
+import { buildLaunch, buildMigrate, fetchAssets, fetchCoins, prepareSwap, tokenBalance } from '../lib/dbc'
 import { PLATFORM_WALLET } from '../lib/config'
 
 export default function SimCheck() {
@@ -19,7 +19,8 @@ export default function SimCheck() {
       const { blockhash } = await connection.getLatestBlockhash('confirmed')
       fresh.feePayer = payer
       fresh.recentBlockhash = blockhash
-      fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+      fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
+      if (!signers.length) fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
       const v = new VersionedTransaction(fresh.compileMessage())
       if (signers.length) v.sign(signers)
       const size = v.serialize().length
@@ -41,12 +42,19 @@ export default function SimCheck() {
           }
         }
         push({ simPayer: payer.toBase58(), sol: (await connection.getBalance(payer)) / 1e9 })
-        const l = await buildLaunch(connection, payer, { name: 'Sim Test Coin', symbol: 'SIMT', uri: 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/49BmchtwCyRYj.json', feeBps: 100, dynamic: true, shield: true })
-        push({ caps: l.caps })
-        await sim('LAUNCH (config + pool, shield+dynamic)', l.tx, payer, l.signers)
-        const l2 = await buildLaunch(connection, payer, { name: 'Sim Test Coin Two', symbol: 'SIMTWO', uri: 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/49BmchtwCyRYj.json', feeBps: 300, dynamic: false, shield: false })
-        await sim('LAUNCH (3%, no shield)', l2.tx, payer, l2.signers)
-
+        const { assets } = await fetchAssets()
+        const stocks = assets.filter((x) => x.category === 'stock' && !x.halted)
+        push({ assets: assets.length, stocks: stocks.length, sample: stocks.slice(0, 3).map((x) => x.symbol) })
+        const pairs = [assets.find((x) => x.symbol === 'SOL')!, assets.find((x) => x.symbol === 'USDC')!, ...stocks.slice(0, 3)]
+        for (const a of pairs) {
+          try {
+            const l = await buildLaunch(connection, payer, { quoteMint: a.mint, name: 'Maximum Length Coin Name Here!!', symbol: 'MAXTICKER1', uri: 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/49BmchtwCyRYj.json', feeBps: 100, dynamic: true, shield: true })
+            push({ pair: a.symbol, caps: { open: +l.caps.initialCap.toFixed(4), grad: +l.caps.graduationCap.toFixed(4), usd: l.caps.usd } })
+            await sim(`LAUNCH paired with ${a.symbol} (max-length name/ticker)`, l.tx, payer, l.signers)
+          } catch (e: any) {
+            push({ pair: a.symbol, buildError: e?.message })
+          }
+        }
         const coins = await fetchCoins(connection)
         push({ coins: coins.map((c) => ({ s: c.symbol, prog: +c.progress.toFixed(3), complete: c.complete, migrated: c.migrated, creator: c.creator.slice(0, 6) })) })
         const live = coins.find((c) => !c.complete)
