@@ -58,6 +58,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (g.result !== MAINNET_GENESIS) throw new Error('Wrong network')
       checkedAt = now
     }
+    // Batches are split into single calls: many RPCs (including the public one) reject JSON-RPC batches.
+    if (Array.isArray(body)) {
+      const results = []
+      for (let i = 0; i < body.length; i += 5) {
+        results.push(
+          ...(await Promise.all(
+            body.slice(i, i + 5).map((call: any) => rpc(call).catch((e) => ({ jsonrpc: '2.0', id: call.id, error: { code: -32000, message: e?.message || 'RPC error' } }))),
+          )),
+        )
+      }
+      return res.status(200).json(results)
+    }
     return res.status(200).json(await rpc(body))
   } catch (e: any) {
     return res.status(503).json({ jsonrpc: '2.0', id: Array.isArray(body) ? null : body?.id ?? null, error: { code: -32000, message: `Mainnet RPC unavailable (${e?.message || 'error'}). Set a dedicated RPC_URL.` } })
