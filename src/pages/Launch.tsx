@@ -5,7 +5,7 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { buildLaunch, fetchCoin, launchCaps, prepareSwap, svxBalance } from '../lib/dbc'
 import { GRAD_MCAP_USD, OPEN_MCAP_USD, Q } from '../lib/config'
 import { errMsg, useSubmit } from '../lib/hooks'
-import { fileToDataUrl, uploadMetadata } from '../lib/upload'
+import { prepareImage, uploadMetadata } from '../lib/upload'
 import { validateLaunch } from '../lib/validation'
 import { useToast } from '../components/Toast'
 import { compact } from '../lib/format'
@@ -51,8 +51,12 @@ export default function Launch() {
   const onFile = async (f?: File) => {
     if (!f) return
     if (!/^image\/(png|jpeg|webp|gif)$/.test(f.type)) return toast('err', 'Use a PNG, JPG, WEBP or GIF image')
-    if (f.size > 1_000_000) return toast('err', 'Image must be under 1 MB')
-    setImage(await fileToDataUrl(f))
+    if (f.size > 10_000_000) return toast('err', 'Image must be under 10 MB')
+    try {
+      setImage(await prepareImage(f))
+    } catch (e) {
+      toast('err', errMsg(e))
+    }
   }
 
   const buy = Number(firstBuy || 0)
@@ -130,12 +134,19 @@ export default function Launch() {
             }}
           >
             {image ? (
-              <img src={image} alt="" />
+              <div className="drop-preview">
+                <img src={image} alt="" />
+                <span>
+                  Image ready
+                  <br />
+                  <small className="dim">Click or drop to replace</small>
+                </span>
+              </div>
             ) : (
               <span>
                 Drop an image or click to upload
                 <br />
-                <small className="dim">PNG, JPG, WEBP, GIF · max 1 MB</small>
+                <small className="dim">PNG, JPG, WEBP, GIF · square works best · max 10 MB</small>
               </span>
             )}
             <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={(e) => onFile(e.target.files?.[0])} />
