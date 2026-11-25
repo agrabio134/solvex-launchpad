@@ -32,7 +32,7 @@ export default function CoinCard({ coin }: { coin: Coin }) {
         </div>
         <div className="coin-stats mono">
           <span>
-            MC <b>{compact(coin.mcapSvx)}</b> SVX
+            MC <b>{compact(coin.mcapSvx)}</b> FLIP
           </span>
           <span>{coin.status === 'graduated' ? 'on Solana' : pct(coin.progress)}</span>
         </div>

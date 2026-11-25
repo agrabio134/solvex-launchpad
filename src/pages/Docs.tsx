@@ -6,8 +6,8 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'overview',
     title: 'Overview',
     body: [
-      'Solvex is a memecoin launchpad powered entirely by $SVX. Every coin launched here is paired against $SVX, so every trade on the platform runs through one token.',
-      'Coins are created on Meteora’s Dynamic Bonding Curve (DBC) program. Solvex owns one DBC config that sets the rules every coin follows: curve shape, fees and graduation target.',
+      'Solvex is a memecoin launchpad powered entirely by $FLIP. Every coin launched here is paired against $FLIP, so every trade on the platform runs through one token.',
+      'Coins are created on Meteora’s Dynamic Bonding Curve (DBC) program. Each launch creates its own curve config and market in one transaction, paired with $FLIP, with the Solvex platform wallet as fee partner.',
     ],
   },
   {
@@ -15,7 +15,7 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     title: 'Launching a coin',
     body: [
       'Connect a wallet, open Launch, and add an image, a name (up to 32 characters) and a ticker (up to 10). Socials and a description are optional.',
-      'The image and metadata are pinned to IPFS, then a single transaction creates the mint and the curve. If you set a first buy, it executes in that same transaction, so nobody can buy ahead of you.',
+      'The image and metadata are stored, then one transaction creates the mint, the curve config and the market. Every transaction is simulated on mainnet before your wallet is asked to sign. An optional first buy follows right after, and the optional anti-snipe shield starts the fee at 10% and lowers it to your chosen fee over 5 minutes.',
       'Every coin has a fixed 1,000,000,000 supply and no mint authority.',
     ],
   },
@@ -23,14 +23,14 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'trading',
     title: 'Trading on the curve',
     body: [
-      'Buying sends $SVX into the curve and moves the price up; selling returns $SVX and moves it down. Quotes include the trading fee and your slippage limit; if the price moves past it, the transaction fails instead of filling at a worse price.',
+      'Buying sends $FLIP into the curve and moves the price up; selling returns $FLIP and moves it down. Quotes include the trading fee and your slippage limit; if the price moves past it, the transaction fails instead of filling at a worse price.',
     ],
   },
   {
     id: 'fees',
     title: 'Fees',
     body: [
-      'A trading fee is charged in $SVX on every trade. Part goes to the coin’s creator, part to Solvex, and a share to Meteora’s protocol.',
+      'Creators pick a 1–3% trading fee, charged in $FLIP. After Meteora’s protocol share, the creator gets 50% and Solvex gets 50%.',
       'Creators claim their fees anytime from My coins or the coin page.',
     ],
   },
@@ -38,8 +38,8 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'graduation',
     title: 'Graduation',
     body: [
-      'When the curve has collected its graduation target in $SVX, trading on the curve stops. Meteora’s migration keeper moves the liquidity into a DAMM v2 pool on Solana.',
-      'The LP from graduation is permanently locked. From then on the coin trades on Jupiter and every Solana aggregator, still paired with $SVX.',
+      'Every coin opens at about a $4K market cap and graduates at about $35K, converted to $FLIP at launch. When the curve is full, anyone can press Migrate on the coin page to move the liquidity into a Meteora DAMM v2 pool on Solana.',
+      'The LP from graduation is permanently locked, split between the creator and Solvex, who both keep earning its trading fees. Trading continues on the same coin page and on Jupiter.',
     ],
   },
   {

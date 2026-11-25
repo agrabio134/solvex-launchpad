@@ -1,24 +1,24 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useCoins, useLaunchpad } from '../lib/hooks'
+import { useCoins } from '../lib/hooks'
+import { GRAD_MCAP_USD } from '../lib/config'
 import type { Coin } from '../lib/dbc'
 import { compact } from '../lib/format'
 import CoinCard from '../components/CoinCard'
 
 function useLaunchParams() {
-  const { lp } = useLaunchpad()
   return {
-    threshold: lp ? `${compact(lp.thresholdSvx, 1)} SVX` : '—',
-    fee: lp ? `${+lp.feePct.toFixed(2)}%` : '—',
-    creatorShare: lp ? `${lp.creatorSharePct}%` : 'a share',
+    threshold: `$${compact(GRAD_MCAP_USD, 0)} market cap`,
+    fee: '1–3%',
+    creatorShare: '50%',
   }
 }
 
 const FAQ: [string, string][] = [
-  ['What is $SVX?', 'The native currency of Solvex. Every coin launched here is priced, bought and sold in $SVX, so all activity on the platform flows through one token.'],
-  ['How do I launch a coin?', 'Connect a Solana wallet holding a little SOL for network fees, open Launch, add an image, a name and a ticker, and optionally make the first buy in $SVX. The coin appears in New Pairs as soon as the transaction confirms.'],
-  ['How is the price set?', 'Each coin trades on its own Meteora Dynamic Bonding Curve. Buying with $SVX moves the price up the curve, selling moves it down. There are no presales and no team allocations: everyone buys from the same curve.'],
-  ['What does graduation mean?', 'When a curve has collected its graduation target in $SVX, trading on the curve stops and the liquidity migrates automatically into a Meteora DAMM v2 pool on Solana, where the coin trades on every aggregator.'],
+  ['What is $FLIP?', 'The native currency of Solvex. Every coin launched here is priced, bought and sold in $FLIP, so all activity on the platform flows through one token.'],
+  ['How do I launch a coin?', 'Connect a Solana wallet holding a little SOL for network fees, open Launch, add an image, a name and a ticker, and optionally make the first buy in $FLIP. The coin appears in New Pairs as soon as the transaction confirms.'],
+  ['How is the price set?', 'Each coin trades on its own Meteora Dynamic Bonding Curve. Buying with $FLIP moves the price up the curve, selling moves it down. There are no presales and no team allocations: everyone buys from the same curve.'],
+  ['What does graduation mean?', 'When a curve has collected its graduation target in $FLIP, trading on the curve stops. One click (by anyone) migrates the liquidity into a locked Meteora DAMM v2 pool on Solana, where the coin keeps trading here and on every aggregator.'],
   ['Is the graduated liquidity locked?', 'Yes. The LP created at graduation is permanently locked, so it cannot be pulled.'],
   ['Do creators earn anything?', 'Creators earn a share of every trading fee on their coin. Fees build up in the pool and can be claimed anytime from My coins.'],
   ['Which wallets work?', 'Any Solana wallet that supports the Wallet Standard: Phantom, Solflare, Backpack and others.'],
@@ -64,7 +64,7 @@ export default function Home() {
         <div className="hero-grid" aria-hidden />
         <div className="wrap hero-in">
           <div className="eyebrow">
-            <i className="live-dot" /> Launchpad live · powered by $SVX
+            <i className="live-dot" /> Launchpad live · powered by $FLIP
           </div>
           <h1>
             The memecoin economy,
@@ -72,7 +72,7 @@ export default function Home() {
             <em>on one token.</em>
           </h1>
           <p className="lede">
-            Solvex is a launchpad built for the memecoin economy and powered entirely by $SVX. Launch coins, trade them on
+            Solvex is a launchpad built for the memecoin economy and powered entirely by $FLIP. Launch coins, trade them on
             the native curve, and watch the ones that make it graduate straight onto Solana.
           </p>
           <div className="cta-row">
@@ -87,7 +87,7 @@ export default function Home() {
           <dl className="stats">
             <div>
               <dt>Currency</dt>
-              <dd>$SVX</dd>
+              <dd>$FLIP</dd>
             </div>
             <div>
               <dt>Curve engine</dt>
@@ -95,7 +95,7 @@ export default function Home() {
             </div>
             <div>
               <dt>Graduates at</dt>
-              <dd>{params.threshold}</dd>
+              <dd>${compact(GRAD_MCAP_USD, 0)}</dd>
             </div>
             <div>
               <dt>Trading fee</dt>
@@ -103,8 +103,8 @@ export default function Home() {
             </div>
           </dl>
 
-          <div className="flow" aria-label="SVX flows from launch to Solana">
-            {['$SVX', 'Launch', 'Bonding curve', 'Graduation', 'Solana · DAMM v2'].map((s, i) => (
+          <div className="flow" aria-label="FLIP flows from launch to Solana">
+            {['$FLIP', 'Launch', 'Bonding curve', 'Graduation', 'Solana · DAMM v2'].map((s, i) => (
               <div className="flow-node" key={s}>
                 <span className="mono dim">{String(i + 1).padStart(2, '0')}</span>
                 <b>{s}</b>
@@ -124,7 +124,7 @@ export default function Home() {
           <Counter label="Coins launched" value={coins.length.toLocaleString()} />
           <Counter label="In final stretch" value={groups.final.length.toLocaleString()} />
           <Counter label="Graduated to Solana" value={groups.grad.length.toLocaleString()} />
-          <Counter label="SVX in live curves" value={compact(groups.locked, 1)} />
+          <Counter label="FLIP in live curves" value={compact(groups.locked, 1)} />
         </div>
         <div className="cols">
           <Column title="New pairs" tag="new" coins={groups.fresh} />
@@ -142,7 +142,7 @@ export default function Home() {
       <section className="sec wrap">
         <SecHead n="02" title="How it works" sub="Three steps from idea to Solana." />
         <div className="steps">
-          <Step n="1" title="Hold $SVX" body="$SVX is the currency of the whole launchpad. Every buy, sell and first buy is paid in it." />
+          <Step n="1" title="Hold $FLIP" body="$FLIP is the currency of the whole launchpad. Every buy, sell and first buy is paid in it." />
           <Step n="2" title="Launch or trade" body="Launch a coin with an image, name and ticker, or trade any coin on its bonding curve. Price moves with every trade." />
           <Step n="3" title="Graduate to Solana" body={`At ${params.threshold} the curve completes and liquidity migrates to a locked Meteora DAMM v2 pool on Solana.`} />
         </div>
@@ -152,7 +152,7 @@ export default function Home() {
       <section className="sec wrap">
         <SecHead n="03" title="Why Solvex" sub="A launchpad with its own economy." />
         <div className="cards">
-          <Card k="Currency" title="One token underneath" body="All pairs are quoted in $SVX, so volume on every coin is demand for the same asset." />
+          <Card k="Currency" title="One token underneath" body="All pairs are quoted in $FLIP, so volume on every coin is demand for the same asset." />
           <Card k="Curve" title="Fair launch, every time" body="No presale, no team bag. Everyone buys from the same Meteora bonding curve." />
           <Card k="Fees" title={`Creators earn ${params.creatorShare}`} body={`of the ${params.fee} trading fee on their coin, claimable whenever they like.`} />
           <Card k="Liquidity" title="Locked at graduation" body="The LP created when a coin graduates is permanently locked. It can't be pulled." />
@@ -163,13 +163,13 @@ export default function Home() {
 
       {/* 04 LOOP */}
       <section className="sec wrap">
-        <SecHead n="04" title="The loop" sub="How activity on Solvex feeds back into $SVX." />
+        <SecHead n="04" title="The loop" sub="How activity on Solvex feeds back into $FLIP." />
         <ol className="loop">
-          <li><b>Coins launch</b> priced in $SVX</li>
-          <li><b>Traders buy</b> with $SVX on the curve</li>
+          <li><b>Coins launch</b> priced in $FLIP</li>
+          <li><b>Traders buy</b> with $FLIP on the curve</li>
           <li><b>Fees accrue</b> to creators and the protocol</li>
-          <li><b>Winners graduate</b> pairing $SVX liquidity on Solana</li>
-          <li><b>More demand</b> for $SVX, more launches</li>
+          <li><b>Winners graduate</b> pairing $FLIP liquidity on Solana</li>
+          <li><b>More demand</b> for $FLIP, more launches</li>
         </ol>
       </section>
 

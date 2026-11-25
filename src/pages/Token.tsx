@@ -3,13 +3,25 @@ import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { PublicKey } from '@solana/web3.js'
-import { buildClaimCreatorFeeTx, buildSwapTx, fetchCoin, fetchTrades, quoteSwap, svxBalance, tokenBalance, type Coin, type Quote, type Trade } from '../lib/dbc'
-import { explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
+import {
+  buildClaimFees,
+  buildClaimLpFees,
+  buildMigrate,
+  fetchCoin,
+  fetchTrades,
+  prepareSwap,
+  svxBalance,
+  tokenBalance,
+  type Coin,
+  type Prepared,
+  type Trade,
+} from '../lib/dbc'
+import { PLATFORM_WALLET, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
-import { errMsg, useLaunchpad, useSend } from '../lib/hooks'
-import PriceChart from '../components/PriceChart'
+import { errMsg, useLaunchpad, useSubmit } from '../lib/hooks'
 import { useToast } from '../components/Toast'
 import { CoinAvatar, Progress } from '../components/CoinCard'
+import PriceChart from '../components/PriceChart'
 
 const PRESETS = { buy: ['100', '500', '1000', '5000'], sell: ['25%', '50%', '75%', '100%'] }
 
@@ -18,7 +30,8 @@ export default function Token() {
   const { connection } = useConnection()
   const { publicKey } = useWallet()
   const { setVisible } = useWalletModal()
-  const send = useSend()
+  const { svxMint, usd } = useLaunchpad()
+  const submit = useSubmit()
   const toast = useToast()
 
   const [coin, setCoin] = useState<Coin | null>(null)
@@ -26,12 +39,12 @@ export default function Token() {
   const [side, setSide] = useState<'buy' | 'sell'>('buy')
   const [amount, setAmount] = useState('')
   const [slippage, setSlippage] = useState(2)
-  const [quote, setQuote] = useState<Quote | null>(null)
+  const [quote, setQuote] = useState<Prepared | null>(null)
+  const [quoteErr, setQuoteErr] = useState('')
   const [quoting, setQuoting] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
   const [bal, setBal] = useState({ svx: 0, token: 0 })
   const [trades, setTrades] = useState<Trade[]>([])
-  const { svxMint } = useLaunchpad()
   const [copied, setCopied] = useState(false)
 
   const load = useCallback(async () => {
@@ -41,7 +54,7 @@ export default function Token() {
       setMissing(!c)
       if (c) fetchTrades(connection, c).then(setTrades).catch(() => {})
     } catch {
-      setMissing(true)
+      setMissing((m) => m || false)
     }
   }, [connection, id])
 
@@ -49,84 +62,104 @@ export default function Token() {
     if (!publicKey || !coin) return
     const [svx, token] = await Promise.all([svxBalance(connection, publicKey), tokenBalance(connection, publicKey, new PublicKey(coin.mint))])
     setBal({ svx, token })
-  }, [connection, publicKey, coin])
+  }, [connection, publicKey, coin?.mint])
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 12000)
+    const t = setInterval(load, 15000)
     return () => clearInterval(t)
   }, [load])
   useEffect(() => {
     loadBal()
   }, [loadBal])
 
-  // live quote
+  // live quote (builds the real transaction, refreshed while typing)
   useEffect(() => {
     setQuote(null)
-    const n = Number(amount)
-    if (!coin || !n || coin.migrated) return
+    setQuoteErr('')
+    if (!coin || !Number(amount) || (coin.complete && !coin.migrated)) return
+    const owner = publicKey ?? PLATFORM_WALLET
     setQuoting(true)
     const t = setTimeout(() => {
-      quoteSwap(connection, coin.pool, side, n, slippage * 100)
+      prepareSwap(connection, coin, side, amount, slippage * 100, owner)
         .then(setQuote)
-        .catch(() => setQuote(null))
+        .catch((e) => setQuoteErr(errMsg(e)))
         .finally(() => setQuoting(false))
-    }, 350)
+    }, 400)
     return () => clearTimeout(t)
-  }, [amount, side, slippage, coin?.pool, coin?.migrated, connection])
+  }, [amount, side, slippage, coin?.pool, coin?.complete, coin?.migrated, connection, publicKey])
 
   if (missing)
     return (
       <div className="wrap page">
         <div className="notice">
-          Coin not found. <Link to="/board">Back to the board</Link>
+          This coin isn't a Solvex market. <Link to="/board">Back to the board</Link>
         </div>
       </div>
     )
-  if (!coin) return <div className="wrap page"><div className="coin skeleton tall" /></div>
+  if (!coin)
+    return (
+      <div className="wrap page">
+        <div className="coin skeleton tall" />
+      </div>
+    )
 
-  const isCreator = publicKey?.toBase58() === coin.creator
+  const me = publicKey?.toBase58()
+  const isCreator = me === coin.creator
+  const isPlatform = !!publicKey && publicKey.equals(PLATFORM_WALLET)
+  const needsMigration = coin.complete && !coin.migrated
+  const busy = !!status
+
+  const run = async (label: string, fn: () => Promise<string | void>) => {
+    if (!publicKey) return setVisible(true)
+    try {
+      setStatus(label)
+      const sig = await fn()
+      if (sig) toast('ok', 'Done', sig)
+      setAmount('')
+      await load()
+      await loadBal()
+    } catch (e) {
+      toast('err', errMsg(e))
+    } finally {
+      setStatus('')
+    }
+  }
+
+  const trade = () =>
+    run('Preparing…', async () => {
+      const n = Number(amount)
+      if (!n) return
+      if (side === 'buy' && n > bal.svx) throw new Error('Not enough FLIP')
+      if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
+      const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
+      return submit(p.tx, [], setStatus)
+    })
+
+  const migrate = () =>
+    run('Preparing migration…', async () => {
+      const m = await buildMigrate(connection, coin, publicKey!)
+      return submit(m.tx, m.signers, setStatus)
+    })
+
+  const claim = () =>
+    run('Preparing claim…', async () => submit(await buildClaimFees(connection, coin, publicKey!), [], setStatus))
+
+  const claimLp = () =>
+    run('Preparing claim…', async () => {
+      const txs = await buildClaimLpFees(connection, coin, publicKey!)
+      let last = ''
+      for (const tx of txs) last = await submit(tx, [], setStatus)
+      return last
+    })
+
   const preset = (p: string) => {
     if (side === 'buy') return setAmount(p)
     const f = parseInt(p) / 100
-    setAmount(String(+(bal.token * f).toFixed(6)))
+    setAmount(String(Math.floor(bal.token * f * 1e6) / 1e6))
   }
 
-  const trade = async () => {
-    if (!publicKey) return setVisible(true)
-    const n = Number(amount)
-    if (!n) return
-    if (side === 'buy' && n > bal.svx) return toast('err', 'Not enough SVX')
-    if (side === 'sell' && n > bal.token) return toast('err', `Not enough $${coin.symbol}`)
-    try {
-      setBusy(true)
-      const q = quote ?? (await quoteSwap(connection, coin.pool, side, n, slippage * 100))
-      const tx = await buildSwapTx(connection, publicKey, coin.pool, side, q)
-      const sig = await send(tx)
-      toast('ok', `${side === 'buy' ? 'Bought' : 'Sold'} $${coin.symbol}`, sig)
-      setAmount('')
-      load()
-      loadBal()
-    } catch (e) {
-      toast('err', errMsg(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const claim = async () => {
-    if (!publicKey) return
-    try {
-      setBusy(true)
-      const sig = await send(await buildClaimCreatorFeeTx(connection, publicKey, coin.pool))
-      toast('ok', 'Creator fees claimed', sig)
-      load()
-    } catch (e) {
-      toast('err', errMsg(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const statusLabel = coin.migrated ? 'On Solana' : coin.complete ? 'Curve complete' : coin.status === 'final' ? 'Final stretch' : 'New'
 
   return (
     <div className="wrap page token">
@@ -139,9 +172,7 @@ export default function Token() {
         <div>
           <div className="token-title">
             <h1>${coin.symbol}</h1>
-            <span className={`tag tag-${coin.status === 'graduated' ? 'grad' : coin.status}`}>
-              {coin.status === 'graduated' ? 'Graduated' : coin.status === 'final' ? 'Final stretch' : 'New'}
-            </span>
+            <span className={`tag tag-${coin.status === 'graduated' ? 'grad' : coin.status}`}>{statusLabel}</span>
           </div>
           <div className="dim">{coin.name}</div>
           <button
@@ -165,26 +196,28 @@ export default function Token() {
       <div className="token-grid">
         <div className="token-main">
           <div className="kpis">
-            <Kpi label="Price" value={`${price(coin.priceSvx)} SVX`} />
-            <Kpi label="Market cap" value={`${compact(coin.mcapSvx)} SVX`} />
-            <Kpi label="In curve" value={`${compact(coin.reserveSvx)} SVX`} />
+            <Kpi label="Price" value={usd ? `$${price(coin.priceSvx * usd)}` : `${price(coin.priceSvx)} FLIP`} />
+            <Kpi label="Market cap" value={usd ? `$${compact(coin.mcapSvx * usd)}` : `${compact(coin.mcapSvx)} FLIP`} />
+            <Kpi label="In curve" value={`${compact(coin.reserveSvx)} FLIP`} />
             <Kpi label="Age" value={ago(coin.createdAt)} />
           </div>
 
           <div className="panel">
-            <PriceChart trades={trades} current={coin.priceSvx} />
+            <PriceChart trades={trades} current={coin.priceSvx} usd={usd} symbol={coin.symbol} />
           </div>
 
           <div className="panel">
             <div className="curve-head">
               <b>Bonding curve</b>
-              <span className="mono">{coin.migrated ? 'Complete' : pct(coin.progress)}</span>
+              <span className="mono">{coin.complete ? 'Complete' : pct(coin.progress)}</span>
             </div>
-            <Progress value={coin.progress} graduated={coin.migrated} />
+            <Progress value={coin.progress} graduated={coin.complete} />
             <p className="dim small">
               {coin.migrated
-                ? 'This coin graduated. Its liquidity now sits in a locked Meteora DAMM v2 pool on Solana.'
-                : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} SVX more and $${coin.symbol} graduates to Solana.`}
+                ? 'Graduated. Liquidity sits in a locked Meteora DAMM v2 pool on Solana, and trades here route through it.'
+                : coin.complete
+                  ? 'The curve is full. Anyone can migrate it to Solana; trading resumes there right after.'
+                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} FLIP more and $${coin.symbol} graduates to Solana.`}
             </p>
           </div>
 
@@ -198,7 +231,7 @@ export default function Token() {
           <div className="panel">
             <div className="curve-head">
               <b>Trades</b>
-              <a className="dim small" href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer">
+              <a className="dim small" href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer">
                 Pool on explorer ↗
               </a>
             </div>
@@ -211,7 +244,7 @@ export default function Token() {
                     <tr>
                       <th>Age</th>
                       <th>Type</th>
-                      <th>SVX</th>
+                      <th>FLIP</th>
                       <th>{coin.symbol}</th>
                       <th>Price</th>
                       <th>Trader</th>
@@ -246,13 +279,13 @@ export default function Token() {
         </div>
 
         <aside className="token-side">
-          {coin.migrated ? (
+          {needsMigration ? (
             <div className="panel">
-              <b>Trading moved to Solana</b>
-              <p className="dim small">The curve is complete. Trade ${coin.symbol} on any Solana aggregator.</p>
-              <a className="btn btn-primary btn-block" href={jupiterSwap(svxMint ?? 'SOL', coin.mint)} target="_blank" rel="noreferrer">
-                Trade on Jupiter ↗
-              </a>
+              <b>Ready to graduate</b>
+              <p className="dim small">The curve is full. Migrating moves its liquidity into a locked Meteora DAMM v2 pool so trading continues on Solana. Anyone can do it; you pay only network fees.</p>
+              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={migrate}>
+                {!publicKey ? 'Connect wallet' : status || 'Migrate to Solana'}
+              </button>
             </div>
           ) : (
             <div className="panel trade">
@@ -264,12 +297,10 @@ export default function Token() {
                   Sell
                 </button>
               </div>
-              <div className="bal dim small mono">
-                Balance: {side === 'buy' ? `${compact(bal.svx)} SVX` : `${compact(bal.token)} ${coin.symbol}`}
-              </div>
+              <div className="bal dim small mono">Balance: {side === 'buy' ? `${compact(bal.svx)} FLIP` : `${compact(bal.token)} ${coin.symbol}`}</div>
               <div className="input-suffix">
                 <input className="input mono big" inputMode="decimal" placeholder="0.0" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} />
-                <i>{side === 'buy' ? 'SVX' : coin.symbol}</i>
+                <i>{side === 'buy' ? 'FLIP' : coin.symbol}</i>
               </div>
               <div className="presets">
                 {PRESETS[side].map((p) => (
@@ -281,15 +312,19 @@ export default function Token() {
               <div className="quote mono small">
                 <div>
                   <span className="dim">You receive</span>
-                  <span>{quoting ? '…' : quote ? `${compact(quote.amountOut)} ${side === 'buy' ? coin.symbol : 'SVX'}` : '—'}</span>
+                  <span>{quoting ? '…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : 'FLIP'}` : '—'}</span>
+                </div>
+                <div>
+                  <span className="dim">Minimum</span>
+                  <span>{quote ? compact(quote.minOut) : '—'}</span>
                 </div>
                 <div>
                   <span className="dim">Price impact</span>
-                  <span className={quote && quote.priceImpact > 0.05 ? 'down' : ''}>{quote ? `${(quote.priceImpact * 100).toFixed(2)}%` : '—'}</span>
+                  <span className={quote?.priceImpact && quote.priceImpact > 5 ? 'down' : ''}>{quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : '—'}</span>
                 </div>
                 <div>
-                  <span className="dim">Fee</span>
-                  <span>{quote ? `${compact(quote.fee)} SVX` : '—'}</span>
+                  <span className="dim">Route</span>
+                  <span>{coin.migrated ? 'Meteora DAMM v2' : 'Bonding curve'}</span>
                 </div>
                 <div>
                   <span className="dim">Slippage</span>
@@ -302,26 +337,38 @@ export default function Token() {
                   </span>
                 </div>
               </div>
+              {quoteErr && <p className="down small">{quoteErr}</p>}
               <button className={`btn btn-block ${side === 'buy' ? 'btn-primary' : 'btn-sell'}`} disabled={!!publicKey && (busy || !Number(amount))} onClick={trade}>
-                {!publicKey ? 'Connect wallet' : busy ? 'Confirming…' : side === 'buy' ? `Buy $${coin.symbol}` : `Sell $${coin.symbol}`}
+                {!publicKey ? 'Connect wallet' : status || (side === 'buy' ? `Buy $${coin.symbol}` : `Sell $${coin.symbol}`)}
               </button>
+              {coin.migrated && svxMint && (
+                <a className="dim small center-link" href={jupiterSwap(svxMint, coin.mint)} target="_blank" rel="noreferrer">
+                  Also tradable on Jupiter ↗
+                </a>
+              )}
             </div>
           )}
 
-          {isCreator && (
+          {(isCreator || isPlatform) && (
             <div className="panel">
-              <b>Creator fees</b>
-              <p className="mono big-num">{compact(coin.creatorFeeSvx)} SVX</p>
-              <button className="btn btn-ghost btn-block" disabled={busy || coin.creatorFeeSvx <= 0} onClick={claim}>
-                Claim
+              <b>{isPlatform ? 'Platform fees' : 'Creator fees'}</b>
+              <p className="mono big-num">{compact(isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx)} FLIP</p>
+              <button className="btn btn-ghost btn-block" disabled={busy || (isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx) <= 0} onClick={claim}>
+                Claim curve fees
               </button>
+              {coin.migrated && (
+                <button className="btn btn-ghost btn-block" disabled={busy} onClick={claimLp}>
+                  Claim locked-LP fees
+                </button>
+              )}
             </div>
           )}
 
           <div className="panel small">
             <div className="kv"><span className="dim">Creator</span><a href={explorerAddr(coin.creator)} target="_blank" rel="noreferrer" className="mono">{short(coin.creator)}</a></div>
-            <div className="kv"><span className="dim">Pool</span><a href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer" className="mono">{short(coin.pool)}</a></div>
-            <div className="kv"><span className="dim">Graduates at</span><span className="mono">{compact(coin.thresholdSvx)} SVX</span></div>
+            <div className="kv"><span className="dim">Curve</span><a href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer" className="mono">{short(coin.pool)}</a></div>
+            {coin.migrated && <div className="kv"><span className="dim">DAMM v2 pool</span><a href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer" className="mono">{short(coin.tradingPool)}</a></div>}
+            <div className="kv"><span className="dim">Graduates at</span><span className="mono">{compact(coin.thresholdSvx)} FLIP</span></div>
           </div>
         </aside>
       </div>

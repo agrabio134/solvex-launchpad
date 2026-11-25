@@ -10,24 +10,30 @@ const pk = (v?: string) => {
   }
 }
 
-/** Defaults to the same-origin proxy (api/rpc.ts) so the RPC key never reaches the browser. */
+/** Browser talks to the same-origin proxy (api/rpc.ts); the real RPC URL stays server-side. */
 export const RPC_URL: string = env.VITE_RPC_URL || `${window.location.origin}/api/rpc`
-export const CLUSTER: string = env.VITE_CLUSTER || 'mainnet-beta'
-/** The Solvex Meteora DBC config. Its quote mint is $SVX, so SVX is read from it. */
-export const DBC_CONFIG = pk(env.VITE_DBC_CONFIG)
-/** Optional: shown in the header before the config exists. */
-export const SVX_MINT_ENV = pk(env.VITE_SVX_MINT)
-/** Wallet allowed to see the /admin setup page controls (optional, purely cosmetic gate). */
-export const ADMIN_WALLET: string = env.VITE_ADMIN_WALLET || ''
+export const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+
+/** $FLIP: the quote currency of every Solvex market. */
+export const FLIP_MINT = pk(env.VITE_FLIP_MINT || env.VITE_SVX_MINT)
+/** Platform wallet: fee claimer + leftover receiver on every launch config. Markets are discovered by it. */
+export const PLATFORM_WALLET = pk(env.VITE_PLATFORM_WALLET) ?? new PublicKey('C1rdVXhfUe3RDNxMFrGYSHN6MpkhjTLhVaBk3ZpMJWnT')
+
+/** Launch market caps in USD, converted to $FLIP at the live price at launch time. */
+export const OPEN_MCAP_USD = Number(env.VITE_OPEN_MCAP_USD || 4_000)
+export const GRAD_MCAP_USD = Number(env.VITE_GRAD_MCAP_USD || 35_000)
+/** Optional fixed caps in $FLIP, used only when no live $FLIP price is available. */
+export const OPEN_MCAP_FLIP = Number(env.VITE_OPEN_MCAP_FLIP || 0)
+export const GRAD_MCAP_FLIP = Number(env.VITE_GRAD_MCAP_FLIP || 0)
+
 export const X_URL: string = env.VITE_X_URL || 'https://x.com'
 export const TG_URL: string = env.VITE_TG_URL || ''
 
-export const CONFIGURED = !!DBC_CONFIG
+export const CONFIGURED = !!FLIP_MINT
 
 /** Progress share at which a coin moves from New Pairs to Final Stretch. */
 export const FINAL_STRETCH_AT = 0.6
 
-const q = CLUSTER === 'devnet' ? '?cluster=devnet' : ''
-export const explorerTx = (sig: string) => `https://solscan.io/tx/${sig}${q}`
-export const explorerAddr = (a: string) => `https://solscan.io/account/${a}${q}`
+export const explorerTx = (sig: string) => `https://solscan.io/tx/${sig}`
+export const explorerAddr = (a: string) => `https://solscan.io/account/${a}`
 export const jupiterSwap = (inMint: string, outMint: string) => `https://jup.ag/swap/${inMint}-${outMint}`

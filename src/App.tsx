@@ -9,7 +9,6 @@ import Launch from './pages/Launch'
 import Token from './pages/Token'
 import Profile from './pages/Profile'
 import Docs from './pages/Docs'
-import Admin from './pages/Admin'
 
 export default function App() {
   const { pathname, hash } = useLocation()
@@ -28,7 +27,6 @@ export default function App() {
           <Route path="/coin/:id" element={<Gate><Token /></Gate>} />
           <Route path="/profile" element={<Gate><Profile /></Gate>} />
           <Route path="/docs" element={<Docs />} />
-          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

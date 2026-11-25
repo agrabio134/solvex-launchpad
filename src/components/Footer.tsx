@@ -29,10 +29,10 @@ export default function Footer() {
             <Link to="/docs#fees">Fees</Link>
           </div>
           <div>
-            <h5>$SVX</h5>
+            <h5>$FLIP</h5>
             {svxMint && (
               <a href={`https://jup.ag/swap/SOL-${svxMint}`} target="_blank" rel="noreferrer">
-                Buy $SVX
+                Buy $FLIP
               </a>
             )}
             <a href={X_URL} target="_blank" rel="noreferrer">

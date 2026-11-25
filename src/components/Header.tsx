@@ -36,8 +36,8 @@ export default function Header() {
         </nav>
 
         <div className="hdr-right">
-          <button className="ca" onClick={copy} title="Copy $SVX contract address">
-            <b>$SVX</b>
+          <button className="ca" onClick={copy} title="Copy $FLIP contract address">
+            <b>$FLIP</b>
             <span className="mono">{svxMint ? short(ca, 4) : 'soon'}</span>
             <span className="ca-ico">{copied ? '✓' : '⧉'}</span>
           </button>

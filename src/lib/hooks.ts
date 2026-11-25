@@ -1,8 +1,8 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
-import type { Transaction } from '@solana/web3.js'
-import { fetchCoins, getLaunchpad, type Coin, type Launchpad } from './dbc'
-import { CONFIGURED, SVX_MINT_ENV } from './config'
+import type { Keypair, Transaction } from '@solana/web3.js'
+import { fetchCoins, fetchFlipUsd, getLaunchpad, submit, type Coin, type Launchpad, type SignTx } from './dbc'
+import { CONFIGURED, FLIP_MINT } from './config'
 
 /** All coins on the Solvex config, refreshed every `ms`. */
 export function useCoins(ms = 15000) {
@@ -53,25 +53,16 @@ export function useSlot() {
   return slot
 }
 
-/** Signs + sends a prepared transaction with the connected wallet and waits for confirmation. */
-export function useSend() {
+/** Simulates, has the wallet sign, sends and confirms. Returns the signature. */
+export function useSubmit() {
   const { connection } = useConnection()
-  const { sendTransaction } = useWallet()
+  const { publicKey, signTransaction } = useWallet()
   return useCallback(
-    async (tx: Transaction) => {
-      const sig = await sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 })
-      // Poll instead of websocket subscriptions (the RPC is proxied over plain HTTP).
-      for (;;) {
-        const { value } = await connection.getSignatureStatuses([sig])
-        const st = value[0]
-        if (st?.err) throw new Error('Transaction failed on-chain')
-        if (st && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized')) return sig
-        const height = await connection.getBlockHeight('confirmed')
-        if (tx.lastValidBlockHeight && height > tx.lastValidBlockHeight) throw new Error('Transaction expired, please try again')
-        await new Promise((r) => setTimeout(r, 1200))
-      }
+    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}) => {
+      if (!publicKey || !signTransaction) throw new Error('Connect a wallet that can sign transactions')
+      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus)
     },
-    [connection, sendTransaction],
+    [connection, publicKey, signTransaction],
   )
 }
 
@@ -80,6 +71,7 @@ export function errMsg(e: any): string {
   if (/User rejected/i.test(m)) return 'Cancelled in wallet'
   if (/insufficient|0x1\b/i.test(m)) return 'Insufficient balance'
   if (/slippage|0x1774|ExceededSlippage/i.test(m)) return 'Price moved past your slippage'
+  if (/rate|429/i.test(m)) return 'Network is busy, retry in a moment'
   return m.length > 140 ? m.slice(0, 140) + '…' : m
 }
 
@@ -89,28 +81,33 @@ interface LpState {
   lp: Launchpad | null
   error: string | null
   svxMint: string | null
+  usd: number | null
 }
-const LpCtx = createContext<LpState>({ lp: null, error: null, svxMint: SVX_MINT_ENV?.toBase58() ?? null })
+const LpCtx = createContext<LpState>({ lp: null, error: null, svxMint: FLIP_MINT?.toBase58() ?? null, usd: null })
 export const useLaunchpad = () => useContext(LpCtx)
 
-/** Loads the Solvex DBC config once and shares it ($SVX mint, decimals, fees, graduation threshold). */
+/** Loads the Solvex DBC config once and shares it ($FLIP mint, decimals, fees, graduation threshold). */
 export function LaunchpadProvider({ children }: { children: ReactNode }) {
   const { connection } = useConnection()
-  const [state, setState] = useState<LpState>({ lp: null, error: null, svxMint: SVX_MINT_ENV?.toBase58() ?? null })
+  const [state, setState] = useState<LpState>({ lp: null, error: null, svxMint: FLIP_MINT?.toBase58() ?? null, usd: null })
   useEffect(() => {
     if (!CONFIGURED) return
     let alive = true
     const go = () =>
       getLaunchpad(connection)
-        .then((lp) => alive && setState({ lp, error: null, svxMint: lp.quoteMint.toBase58() }))
+        .then((lp) => alive && setState((s) => ({ ...s, lp, error: null, svxMint: lp.quoteMint.toBase58() })))
         .catch((e) => {
           if (!alive) return
           setState((s) => ({ ...s, error: e?.message || 'Could not load launchpad config' }))
           setTimeout(go, 8000)
         })
     go()
+    const price = () => fetchFlipUsd().then((usd) => alive && setState((s) => ({ ...s, usd })))
+    price()
+    const t = setInterval(price, 60000)
     return () => {
       alive = false
+      clearInterval(t)
     }
   }, [connection])
   return createElement(LpCtx.Provider, { value: state }, children)

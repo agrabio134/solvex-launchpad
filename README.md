@@ -1,49 +1,28 @@
 # Solvex launchpad
 
-A memecoin launchpad where every coin is priced in **$SVX**. It runs on Meteora's Dynamic Bonding Curve (DBC), and coins graduate to a locked Meteora DAMM v2 pool on Solana.
+Memecoin launchpad on Meteora's Dynamic Bonding Curve where every market is priced in **$FLIP**.
+Same model as FirePad: each launch creates its own curve config + market in one atomic transaction,
+with the platform wallet as fee partner. Curves graduate into locked Meteora DAMM v2 pools on Solana.
+
+## How it works
+| Step | What happens |
+|---|---|
+| Launch | Image + metadata are stored in Vercel Blob. One transaction creates a DBC config (quote = $FLIP, fee claimer = platform wallet) and the coin's market. Opening ≈ $4K and graduation ≈ $35K market cap, converted to $FLIP at the live price. Fee 1–3%, optional anti-snipe shield (10% → fee over 5 min) and dynamic fee. Optional first buy right after. |
+| Trade | Quotes come from the real curve state; every transaction is simulated on mainnet before the wallet signs, then confirmed by polling. |
+| Graduate | When the curve is full, anyone can press **Migrate** to move liquidity into a DAMM v2 pool (LP permanently locked, split creator / platform). Trading then routes through DAMM v2 on the same page. |
+| Fees | Creator and platform each get 50% of curve trading fees (after Meteora's share), and both claim locked-LP fees after graduation. |
+| Discovery | Markets = pools whose config's fee claimer is the platform wallet and quote mint is $FLIP. |
 
 ## Pages
-| Route | What it does |
-|---|---|
-| `/` | Landing page: hero, live stats, then numbered sections 01–05 (live coins, how it works, why Solvex, the loop, FAQ) |
-| `/board` | New pairs / Final stretch / Graduated columns, with search and sort |
-| `/launch` | Image, name, ticker, socials and an optional first buy in SVX. Creates the pool and makes the first buy in one transaction |
-| `/coin/:mint` | Price, market cap, curve progress, buy/sell with a live quote and slippage, recent transactions, and a creator fee claim |
-| `/profile` | Coins launched from your wallet, with fee claims |
-| `/docs` | Docs |
-| `/admin` | One-time setup: create the Solvex bonding-curve config from your wallet; afterwards claim platform fees |
+`/` landing · `/board` New / Final stretch / Graduated · `/launch` · `/coin/:mint` chart, trades, buy/sell, migrate, fee claims · `/profile` your coins (the platform wallet sees every market and its fees) · `/docs`
 
-## How the DBC logic is laid out
-- `scripts/create-config.ts`: you run this once to create **the** Solvex DBC config. It sets $SVX as the quote mint, the curve (launch and graduation market cap), the fees and the creator share, and 100% locked LP. Graduation migrates to DAMM v2.
-- `src/lib/dbc.ts`: everything the app does on-chain:
-  - `fetchCoins`: `getPoolsByConfig`, then Metaplex metadata, then the JSON image
-  - `buildLaunchTx`: `createPoolWithFirstBuy`, where the new mint keypair co-signs
-  - `quoteSwap` / `buildSwapTx`: `swapQuote` and `swap` (buy = SVX → coin, sell = coin → SVX)
-  - `buildClaimCreatorFeeTx`: `claimCreatorTradingFee`
-- `api/upload.ts`: a Vercel function that stores the coin image and metadata JSON in Vercel Blob (token injected by the connected Blob store).
-- Trades and the price chart are rebuilt from the pool's recent on-chain transactions.
-- `scripts/claim-partner-fees.ts`: claims the Solvex share of fees from every pool.
+## Code
+- `src/lib/dbc.ts`: all chain logic (launch, discovery, quotes, swaps on curve or DAMM v2, migration, fee claims, simulate-then-sign submit)
+- `api/rpc.ts`: mainnet RPC relay; real endpoint in `RPC_URL`, method allowlist, filtered program scans only, rate limit, genesis check
+- `api/upload.ts`: image + metadata to Vercel Blob (validated, rate limited)
+- `api/market-data.ts`: $FLIP USD price (GeckoTerminal)
 
 ## Setup
-```bash
-npm install --legacy-peer-deps
-cp .env.example .env          # fill in RPC (+ SVX mint)
-
-# 1. create the launchpad config: open /admin, connect the wallet that should
-#    receive platform fees, enter the $SVX mint and curve settings, sign.
-#    (CLI alternative: npm run create-config -- --send with PARTNER_KEYPAIR)
-#    -> put the printed address in VITE_DBC_CONFIG and redeploy
-
-# 2. run it (vercel dev also serves /api/upload)
-npx vercel dev
-```
-Optional curve and fee settings for the config script go in `.env`: `INITIAL_MCAP_SVX` (default 30,000), `MIGRATION_MCAP_SVX` (400,000), `TRADING_FEE_BPS` (100 = 1%), `CREATOR_FEE_PCT` (50), `POOL_CREATION_FEE_SVX` (0). Once a config exists on-chain, its parameters can't be changed. To change them, create a new config.
-
-Until `VITE_DBC_CONFIG` is set, the landing page is live and the app pages show an "opening soon" screen. There is no demo data.
-
-## Deploy (Vercel)
-1. Import the repo.
-2. Add `RPC_URL` (server-side, e.g. Helius) and `VITE_DBC_CONFIG` (and optionally `VITE_SVX_MINT`, `VITE_X_URL`, `VITE_TG_URL`).
-3. Connect a Vercel Blob store (for uploads) and deploy. `vercel.json` already handles SPA routing.
-
-The browser talks to `/api/rpc`, which forwards to `RPC_URL` so the key stays private. Use Helius, Triton or QuickNode: public RPCs block `getProgramAccounts`, which the board needs.
+1. Copy `.env.example`; set `VITE_FLIP_MINT`, `VITE_PLATFORM_WALLET`, `RPC_URL`.
+2. Connect a Vercel Blob store to the project (adds `BLOB_READ_WRITE_TOKEN`).
+3. `npm install --legacy-peer-deps && npx vercel dev`, or push to GitHub (Vercel auto-deploys `main`).
