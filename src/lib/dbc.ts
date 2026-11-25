@@ -45,6 +45,7 @@ import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import {
   FINAL_STRETCH_AT,
   FLIP_MINT,
+  LISTED_AFTER,
   GRAD_MCAP_FLIP,
   GRAD_MCAP_USD,
   MAINNET_GENESIS,
@@ -203,6 +204,9 @@ function fetchJson(uri: string) {
 
 type Row = { key: PublicKey; pool: VirtualPool; config: PoolConfig }
 
+/** Launched on Solvex (not an older pool that shares the platform wallet). */
+const listed = (pool: VirtualPool) => Number(pool.poolState.activationPoint.toString()) >= LISTED_AFTER
+
 async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
   if (!rows.length) return []
   const lp = await getLaunchpad(connection)
@@ -303,7 +307,7 @@ export async function fetchCoins(connection: Connection): Promise<Coin[]> {
   for (let i = 0; i < cfgs.length; i += 8) {
     const chunk = cfgs.slice(i, i + 8)
     const res = await Promise.all(chunk.map((c) => dbc.state.getPoolsByConfig(c.key)))
-    res.forEach((pools, j) => pools.forEach((p) => rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
+    res.forEach((pools, j) => pools.forEach((p) => listed(p.account) && rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
   }
   const coins = await toCoins(connection, rows)
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -331,7 +335,7 @@ export async function fetchCoin(connection: Connection, mintOrPool: string): Pro
     }
     pool = await dbc.state.getPool(key).catch(() => null)
   }
-  if (!pool) return null
+  if (!pool || !listed(pool)) return null
   const row = await rowFor(connection, key, pool)
   if (!row) return null
   return (await toCoins(connection, [row]))[0]
@@ -342,7 +346,7 @@ export async function fetchCoinsByCreator(connection: Connection, creator: Publi
   const pools = await dbc.state.getPoolsByCreator(creator)
   const cfgs = new Map((await platformConfigs(connection)).map((c) => [c.key.toBase58(), c.config]))
   const rows = pools
-    .filter((p) => cfgs.has(p.account.poolState.config.toBase58()))
+    .filter((p) => cfgs.has(p.account.poolState.config.toBase58()) && listed(p.account))
     .map((p) => ({ key: p.publicKey, pool: p.account, config: cfgs.get(p.account.poolState.config.toBase58())! }))
   return toCoins(connection, rows)
 }
@@ -362,12 +366,17 @@ export interface Trade {
 }
 
 /** Recent swaps (curve, or DAMM v2 once migrated), rebuilt from the trader's balance changes. Newest first. */
-export async function fetchTrades(connection: Connection, coin: Coin, limit = 50): Promise<Trade[]> {
+export async function fetchTrades(connection: Connection, coin: Coin, limit = 40): Promise<Trade[]> {
   const lp = await getLaunchpad(connection)
   const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.tradingPool), { limit })).filter((s) => !s.err)
   const txs: (ParsedTransactionWithMeta | null)[] = []
   for (let i = 0; i < sigs.length; i += 10) {
-    txs.push(...(await connection.getParsedTransactions(sigs.slice(i, i + 10).map((s) => s.signature), { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })))
+    const part = sigs.slice(i, i + 10)
+    try {
+      txs.push(...(await connection.getParsedTransactions(part.map((s) => s.signature), { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })))
+    } catch {
+      txs.push(...part.map(() => null)) // rate-limited: show what we have
+    }
   }
   const quote = lp.quoteMint.toBase58()
   const out: Trade[] = []

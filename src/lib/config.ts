@@ -29,6 +29,12 @@ export const GRAD_MCAP_FLIP = Number(env.VITE_GRAD_MCAP_FLIP || 0)
 export const X_URL: string = env.VITE_X_URL || 'https://x.com'
 export const TG_URL: string = env.VITE_TG_URL || ''
 
+/**
+ * Only markets launched after this moment (unix seconds) are shown. Hides older pools that share
+ * the platform wallet (e.g. from the previous FirePad launchpad). Default: Solvex go-live, 2026-11-25.
+ */
+export const LISTED_AFTER = Number(env.VITE_LISTED_AFTER || 1795616000)
+
 export const CONFIGURED = !!FLIP_MINT
 
 /** Progress share at which a coin moves from New Pairs to Final Stretch. */
