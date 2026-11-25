@@ -14,6 +14,7 @@ const CORE: Asset[] = [
 const PREFERRED = ['NVDAx', 'AAPLx', 'TSLAx', 'SPYx', 'QQQx', 'MSTRx', 'AMZNx', 'GOOGLx', 'METAx', 'MSFTx', 'COINx']
 
 let cache: { time: number; assets: Asset[] } | null = null
+let lastGood: Asset[] | null = null
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' })
@@ -23,26 +24,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (!cache || Date.now() - cache.time > 300_000) {
       const stocks: Asset[] = []
-      for (let page = 0; page < 30; page++) {
+      const seen = new Set<string>()
+      for (let page = 0; page < 10; page++) {
         const r = await fetch(`https://api.xstocks.fi/api/v2/public/assets?network=Solana&pageSize=100&page=${page}`, { signal: AbortSignal.timeout(12_000) })
         if (!r.ok) throw new Error('Issuer unavailable')
         const data = await r.json()
+        let added = 0
         for (const a of data.nodes ?? []) {
           const d = a.deployments?.find((x: any) => x.network === 'Solana')
-          if (d?.address) stocks.push({ mint: d.address, symbol: a.symbol, name: a.name, logo: a.logo, category: 'stock', halted: !!a.isTradingHalted })
+          if (d?.address && !seen.has(d.address)) {
+            seen.add(d.address)
+            stocks.push({ mint: d.address, symbol: a.symbol, name: a.name, logo: a.logo, category: 'stock', halted: !!a.isTradingHalted })
+            added++
+          }
         }
-        if (!data.page?.hasNextPage) break
+        // stop when the issuer reports no more pages or starts repeating itself
+        if (!data.page?.hasNextPage || added === 0) break
       }
       const rank = (s: string) => {
         const i = PREFERRED.indexOf(s)
         return i < 0 ? 999 : i
       }
       stocks.sort((a, b) => rank(a.symbol) - rank(b.symbol) || a.symbol.localeCompare(b.symbol))
+      if (!stocks.length) throw new Error('Empty catalogue')
       cache = { time: Date.now(), assets: stocks }
+      lastGood = stocks
     }
     res.setHeader('Cache-Control', 'public, s-maxage=120')
     return res.status(200).json({ assets: [...core, ...cache.assets], updatedAt: new Date(cache.time).toISOString() })
   } catch {
+    if (lastGood) return res.status(200).json({ assets: [...core, ...lastGood], stale: true })
     return res.status(200).json({ assets: core, error: 'The stock catalogue is temporarily unavailable. Stock pairs are paused; SOL and USDC remain available.' })
   }
 }

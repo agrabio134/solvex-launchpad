@@ -115,9 +115,9 @@ export function useSubmit() {
   const { connection } = useConnection()
   const { publicKey, signTransaction } = useWallet()
   return useCallback(
-    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}) => {
+    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'launch' | 'migrate') => {
       if (!publicKey || !signTransaction) throw new Error('Connect a wallet that can sign transactions')
-      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus)
+      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget)
     },
     [connection, publicKey, signTransaction],
   )
