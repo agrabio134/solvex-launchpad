@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { buildLaunchTx, svxBalance } from '../lib/dbc'
-import { DEMO } from '../lib/config'
 import { errMsg, useSend } from '../lib/hooks'
 import { fileToDataUrl, uploadMetadata } from '../lib/upload'
 import { useToast } from '../components/Toast'
@@ -39,7 +38,7 @@ export default function Launch() {
   const [bal, setBal] = useState<number | null>(null)
 
   useEffect(() => {
-    if (!publicKey || DEMO) return setBal(null)
+    if (!publicKey) return setBal(null)
     svxBalance(connection, publicKey).then(setBal).catch(() => setBal(null))
   }, [connection, publicKey])
 
@@ -57,7 +56,6 @@ export default function Launch() {
   const submit = async () => {
     if (!publicKey) return setVisible(true)
     if (!valid) return
-    if (DEMO) return toast('info', 'Preview mode: set VITE_DBC_CONFIG and VITE_SVX_MINT to launch for real.')
     if (bal !== null && buy > bal) return toast('err', `First buy is more than your ${compact(bal)} SVX`)
     try {
       setStage('upload')

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { buildClaimCreatorFeeTx, fetchCoinsByCreator, svxBalance, type Coin } from '../lib/dbc'
-import { DEMO } from '../lib/config'
 import { compact, pct } from '../lib/format'
 import { errMsg, useSend } from '../lib/hooks'
 import { useToast } from '../components/Toast'
@@ -22,7 +21,7 @@ export default function Profile() {
   const load = useCallback(async () => {
     if (!publicKey) return
     setCoins(await fetchCoinsByCreator(connection, publicKey).catch(() => []))
-    if (!DEMO) setSvx(await svxBalance(connection, publicKey).catch(() => 0))
+    setSvx(await svxBalance(connection, publicKey).catch(() => 0))
   }, [connection, publicKey])
 
   useEffect(() => {
@@ -45,7 +44,6 @@ export default function Profile() {
   const total = (coins ?? []).reduce((s, c) => s + c.creatorFeeSvx, 0)
 
   const claim = async (c: Coin) => {
-    if (DEMO) return toast('info', 'Preview mode: nothing to claim yet.')
     try {
       setBusy(c.pool)
       const sig = await send(await buildClaimCreatorFeeTx(connection, publicKey, c.pool))

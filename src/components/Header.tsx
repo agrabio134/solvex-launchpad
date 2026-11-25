@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
-import { useSlot } from '../lib/hooks'
-import { SVX_MINT, X_URL } from '../lib/config'
+import { useLaunchpad, useSlot } from '../lib/hooks'
+import { X_URL } from '../lib/config'
 import { short } from '../lib/format'
 import Logo from './Logo'
 
@@ -10,10 +10,11 @@ export default function Header() {
   const slot = useSlot()
   const [copied, setCopied] = useState(false)
   const [open, setOpen] = useState(false)
-  const ca = SVX_MINT?.toBase58() ?? 'SVX contract address soon'
+  const { svxMint } = useLaunchpad()
+  const ca = svxMint ?? ''
 
   const copy = () => {
-    if (!SVX_MINT) return
+    if (!svxMint) return
     navigator.clipboard.writeText(ca)
     setCopied(true)
     setTimeout(() => setCopied(false), 1400)
@@ -37,7 +38,7 @@ export default function Header() {
         <div className="hdr-right">
           <button className="ca" onClick={copy} title="Copy $SVX contract address">
             <b>$SVX</b>
-            <span className="mono">{SVX_MINT ? short(ca, 4) : 'soon'}</span>
+            <span className="mono">{svxMint ? short(ca, 4) : 'soon'}</span>
             <span className="ca-ico">{copied ? '✓' : '⧉'}</span>
           </button>
           <span className="slot mono" title="Current slot">

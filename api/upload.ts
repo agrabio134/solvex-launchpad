@@ -1,61 +1,63 @@
 /**
- * Vercel serverless function: pins the coin image + Metaplex-style JSON to IPFS via Pinata
- * and returns the metadata URI used as the token `uri`.
- * Keeps PINATA_JWT on the server. Run locally with `vercel dev`.
+ * Uploads a coin's image and its Metaplex-style metadata JSON to Vercel Blob
+ * and returns the metadata URI that becomes the token's `uri`.
+ * BLOB_READ_WRITE_TOKEN is injected by the connected Vercel Blob store.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { put } from '@vercel/blob'
 
 const MAX_IMAGE_BYTES = 1_000_000
+const EXT: Record<string, string> = { png: 'png', jpeg: 'jpg', gif: 'gif', webp: 'webp' }
+const clean = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max)
+const url = (v: unknown) => {
+  const s = clean(v, 200)
+  return /^https?:\/\/\S+$/i.test(s) ? s : ''
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' })
-  const jwt = process.env.PINATA_JWT
-  const gateway = (process.env.PINATA_GATEWAY || 'https://gateway.pinata.cloud').replace(/\/$/, '')
-  if (!jwt) return res.status(500).json({ error: 'PINATA_JWT not configured' })
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(500).json({ error: 'Storage is not configured' })
 
   try {
-    const { name, symbol, description = '', image, twitter = '', telegram = '', website = '' } = req.body ?? {}
-    if (!name || !symbol || !image) return res.status(400).json({ error: 'name, symbol and image are required' })
-    if (String(name).length > 32 || String(symbol).length > 10) return res.status(400).json({ error: 'name ≤ 32, ticker ≤ 10 chars' })
+    const body = req.body ?? {}
+    const name = clean(body.name, 32)
+    const symbol = clean(body.symbol, 10).toUpperCase()
+    if (!name || !symbol) return res.status(400).json({ error: 'Name and ticker are required' })
 
-    const m = /^data:(image\/(png|jpeg|gif|webp));base64,(.+)$/.exec(image)
-    if (!m) return res.status(400).json({ error: 'image must be a png, jpg, gif or webp data URL' })
-    const bytes = Buffer.from(m[3], 'base64')
-    if (bytes.length > MAX_IMAGE_BYTES) return res.status(400).json({ error: 'image must be under 1 MB' })
+    const m = /^data:image\/(png|jpeg|gif|webp);base64,(.+)$/.exec(String(body.image ?? ''))
+    if (!m) return res.status(400).json({ error: 'Image must be PNG, JPG, GIF or WEBP' })
+    const bytes = Buffer.from(m[2], 'base64')
+    if (bytes.length > MAX_IMAGE_BYTES) return res.status(400).json({ error: 'Image must be under 1 MB' })
 
-    // 1) image
-    const form = new FormData()
-    form.append('file', new Blob([bytes], { type: m[1] }), `${symbol}.${m[2] === 'jpeg' ? 'jpg' : m[2]}`)
-    const imgRes = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}` },
-      body: form,
+    const slug = symbol.replace(/[^A-Z0-9]/g, '') || 'coin'
+    const img = await put(`coins/${slug}.${EXT[m[1]]}`, bytes, {
+      access: 'public',
+      addRandomSuffix: true,
+      contentType: `image/${m[1]}`,
     })
-    if (!imgRes.ok) throw new Error(`image upload failed: ${await imgRes.text()}`)
-    const imageUri = `${gateway}/ipfs/${(await imgRes.json()).IpfsHash}`
 
-    // 2) metadata json
+    const twitter = url(body.twitter)
+    const telegram = url(body.telegram)
+    const website = url(body.website)
     const metadata = {
       name,
       symbol,
-      description,
-      image: imageUri,
+      description: clean(body.description, 500),
+      image: img.url,
       twitter,
       telegram,
       website,
       extensions: { twitter, telegram, website },
-      createdOn: 'https://solvex.fun',
+      properties: { files: [{ uri: img.url, type: `image/${m[1]}` }], category: 'image' },
     }
-    const jsonRes = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinataContent: metadata, pinataMetadata: { name: `${symbol}-metadata.json` } }),
+    const json = await put(`coins/${slug}.json`, JSON.stringify(metadata), {
+      access: 'public',
+      addRandomSuffix: true,
+      contentType: 'application/json',
     })
-    if (!jsonRes.ok) throw new Error(`metadata upload failed: ${await jsonRes.text()}`)
-    const uri = `${gateway}/ipfs/${(await jsonRes.json()).IpfsHash}`
 
-    return res.status(200).json({ uri, image: imageUri })
+    return res.status(200).json({ uri: json.url, image: img.url })
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || 'upload failed' })
+    return res.status(500).json({ error: e?.message || 'Upload failed' })
   }
 }

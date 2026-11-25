@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { createContext, createElement, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import type { Transaction } from '@solana/web3.js'
-import { fetchCoins, type Coin } from './dbc'
-import { DEMO } from './config'
+import { fetchCoins, getLaunchpad, type Coin, type Launchpad } from './dbc'
+import { CONFIGURED, SVX_MINT_ENV } from './config'
 
 /** All coins on the Solvex config, refreshed every `ms`. */
 export function useCoins(ms = 15000) {
@@ -12,6 +12,7 @@ export function useCoins(ms = 15000) {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
+    if (!CONFIGURED) return setLoading(false)
     try {
       setCoins(await fetchCoins(connection))
       setError(null)
@@ -43,7 +44,7 @@ export function useSlot() {
         .then((s) => alive && setSlot(s))
         .catch(() => {})
     tick()
-    const t = setInterval(tick, DEMO ? 4000 : 2000)
+    const t = setInterval(tick, 2500)
     return () => {
       alive = false
       clearInterval(t)
@@ -76,4 +77,37 @@ export function errMsg(e: any): string {
   if (/insufficient|0x1\b/i.test(m)) return 'Insufficient balance'
   if (/slippage|0x1774|ExceededSlippage/i.test(m)) return 'Price moved past your slippage'
   return m.length > 140 ? m.slice(0, 140) + '…' : m
+}
+
+/* ------------------------------------------------------------ launchpad */
+
+interface LpState {
+  lp: Launchpad | null
+  error: string | null
+  svxMint: string | null
+}
+const LpCtx = createContext<LpState>({ lp: null, error: null, svxMint: SVX_MINT_ENV?.toBase58() ?? null })
+export const useLaunchpad = () => useContext(LpCtx)
+
+/** Loads the Solvex DBC config once and shares it ($SVX mint, decimals, fees, graduation threshold). */
+export function LaunchpadProvider({ children }: { children: ReactNode }) {
+  const { connection } = useConnection()
+  const [state, setState] = useState<LpState>({ lp: null, error: null, svxMint: SVX_MINT_ENV?.toBase58() ?? null })
+  useEffect(() => {
+    if (!CONFIGURED) return
+    let alive = true
+    const go = () =>
+      getLaunchpad(connection)
+        .then((lp) => alive && setState({ lp, error: null, svxMint: lp.quoteMint.toBase58() }))
+        .catch((e) => {
+          if (!alive) return
+          setState((s) => ({ ...s, error: e?.message || 'Could not load launchpad config' }))
+          setTimeout(go, 8000)
+        })
+    go()
+    return () => {
+      alive = false
+    }
+  }, [connection])
+  return createElement(LpCtx.Provider, { value: state }, children)
 }

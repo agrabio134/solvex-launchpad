@@ -1,36 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useConnection } from '@solana/wallet-adapter-react'
-import { useCoins } from '../lib/hooks'
-import { getLaunchConfig, type Coin } from '../lib/dbc'
-import { DEMO, SVX_DECIMALS } from '../lib/config'
+import { useCoins, useLaunchpad } from '../lib/hooks'
+import type { Coin } from '../lib/dbc'
 import { compact } from '../lib/format'
 import CoinCard from '../components/CoinCard'
 
-interface Params {
-  threshold: string
-  fee: string
-  creatorShare: string
-}
-
-function useLaunchParams(): Params {
-  const { connection } = useConnection()
-  const [p, setP] = useState<Params>({ threshold: '85K SVX', fee: '1%', creatorShare: '50%' })
-  useEffect(() => {
-    if (DEMO) return
-    getLaunchConfig(connection)
-      .then((cfg) => {
-        const thr = Number(cfg.migrationQuoteThreshold.toString()) / 10 ** SVX_DECIMALS
-        const feePct = Number(cfg.poolFees.baseFee.cliffFeeNumerator.toString()) / 1e7 // numerator / 1e9 * 100
-        setP({
-          threshold: `${compact(thr, 1)} SVX`,
-          fee: `${+feePct.toFixed(2)}%`,
-          creatorShare: `${cfg.creatorTradingFeePercentage}%`,
-        })
-      })
-      .catch(() => {})
-  }, [connection])
-  return p
+function useLaunchParams() {
+  const { lp } = useLaunchpad()
+  return {
+    threshold: lp ? `${compact(lp.thresholdSvx, 1)} SVX` : '—',
+    fee: lp ? `${+lp.feePct.toFixed(2)}%` : '—',
+    creatorShare: lp ? `${lp.creatorSharePct}%` : 'a share',
+  }
 }
 
 const FAQ: [string, string][] = [

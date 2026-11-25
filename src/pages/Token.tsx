@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
-import { PublicKey, type ConfirmedSignatureInfo } from '@solana/web3.js'
-import { buildClaimCreatorFeeTx, buildSwapTx, fetchCoin, quoteSwap, recentActivity, svxBalance, tokenBalance, type Coin, type Quote } from '../lib/dbc'
-import { DEMO, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
+import { PublicKey } from '@solana/web3.js'
+import { buildClaimCreatorFeeTx, buildSwapTx, fetchCoin, fetchTrades, quoteSwap, svxBalance, tokenBalance, type Coin, type Quote, type Trade } from '../lib/dbc'
+import { explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
-import { errMsg, useSend } from '../lib/hooks'
+import { errMsg, useLaunchpad, useSend } from '../lib/hooks'
+import PriceChart from '../components/PriceChart'
 import { useToast } from '../components/Toast'
 import { CoinAvatar, Progress } from '../components/CoinCard'
 
@@ -29,7 +30,8 @@ export default function Token() {
   const [quoting, setQuoting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [bal, setBal] = useState({ svx: 0, token: 0 })
-  const [activity, setActivity] = useState<ConfirmedSignatureInfo[]>([])
+  const [trades, setTrades] = useState<Trade[]>([])
+  const { svxMint } = useLaunchpad()
   const [copied, setCopied] = useState(false)
 
   const load = useCallback(async () => {
@@ -37,21 +39,21 @@ export default function Token() {
       const c = await fetchCoin(connection, id)
       setCoin(c)
       setMissing(!c)
-      if (c) recentActivity(connection, c.pool).then(setActivity).catch(() => {})
+      if (c) fetchTrades(connection, c).then(setTrades).catch(() => {})
     } catch {
       setMissing(true)
     }
   }, [connection, id])
 
   const loadBal = useCallback(async () => {
-    if (!publicKey || !coin || DEMO) return
+    if (!publicKey || !coin) return
     const [svx, token] = await Promise.all([svxBalance(connection, publicKey), tokenBalance(connection, publicKey, new PublicKey(coin.mint))])
     setBal({ svx, token })
   }, [connection, publicKey, coin])
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 10000)
+    const t = setInterval(load, 12000)
     return () => clearInterval(t)
   }, [load])
   useEffect(() => {
@@ -62,7 +64,7 @@ export default function Token() {
   useEffect(() => {
     setQuote(null)
     const n = Number(amount)
-    if (!coin || !n || DEMO || coin.migrated) return
+    if (!coin || !n || coin.migrated) return
     setQuoting(true)
     const t = setTimeout(() => {
       quoteSwap(connection, coin.pool, side, n, slippage * 100)
@@ -92,7 +94,6 @@ export default function Token() {
 
   const trade = async () => {
     if (!publicKey) return setVisible(true)
-    if (DEMO) return toast('info', 'Preview mode: trading is off until the launchpad config is set.')
     const n = Number(amount)
     if (!n) return
     if (side === 'buy' && n > bal.svx) return toast('err', 'Not enough SVX')
@@ -171,6 +172,10 @@ export default function Token() {
           </div>
 
           <div className="panel">
+            <PriceChart trades={trades} current={coin.priceSvx} />
+          </div>
+
+          <div className="panel">
             <div className="curve-head">
               <b>Bonding curve</b>
               <span className="mono">{coin.migrated ? 'Complete' : pct(coin.progress)}</span>
@@ -192,29 +197,50 @@ export default function Token() {
 
           <div className="panel">
             <div className="curve-head">
-              <b>Recent activity</b>
+              <b>Trades</b>
               <a className="dim small" href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer">
                 Pool on explorer ↗
               </a>
             </div>
-            {activity.length === 0 ? (
-              <p className="dim small">No transactions yet.</p>
+            {trades.length === 0 ? (
+              <p className="dim small">No trades yet. Be the first.</p>
             ) : (
-              <table className="tbl mono">
-                <tbody>
-                  {activity.map((a) => (
-                    <tr key={a.signature}>
-                      <td>{ago(a.blockTime ?? undefined)}</td>
-                      <td>{a.err ? 'failed' : 'ok'}</td>
-                      <td className="right">
-                        <a href={explorerTx(a.signature)} target="_blank" rel="noreferrer">
-                          {short(a.signature, 6)} ↗
-                        </a>
-                      </td>
+              <div className="tbl-wrap">
+                <table className="tbl mono">
+                  <thead>
+                    <tr>
+                      <th>Age</th>
+                      <th>Type</th>
+                      <th>SVX</th>
+                      <th>{coin.symbol}</th>
+                      <th>Price</th>
+                      <th>Trader</th>
+                      <th />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {trades.map((t) => (
+                      <tr key={t.sig}>
+                        <td>{ago(t.time)}</td>
+                        <td className={t.side === 'buy' ? 'up' : 'down'}>{t.side}</td>
+                        <td>{compact(t.svx)}</td>
+                        <td>{compact(t.tokens)}</td>
+                        <td>{price(t.price)}</td>
+                        <td>
+                          <a href={explorerAddr(t.trader)} target="_blank" rel="noreferrer">
+                            {short(t.trader)}
+                          </a>
+                        </td>
+                        <td className="right">
+                          <a href={explorerTx(t.sig)} target="_blank" rel="noreferrer">
+                            ↗
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -224,7 +250,7 @@ export default function Token() {
             <div className="panel">
               <b>Trading moved to Solana</b>
               <p className="dim small">The curve is complete. Trade ${coin.symbol} on any Solana aggregator.</p>
-              <a className="btn btn-primary btn-block" href={jupiterSwap(coin.mint)} target="_blank" rel="noreferrer">
+              <a className="btn btn-primary btn-block" href={jupiterSwap(svxMint ?? 'SOL', coin.mint)} target="_blank" rel="noreferrer">
                 Trade on Jupiter ↗
               </a>
             </div>
@@ -256,6 +282,10 @@ export default function Token() {
                 <div>
                   <span className="dim">You receive</span>
                   <span>{quoting ? '…' : quote ? `${compact(quote.amountOut)} ${side === 'buy' ? coin.symbol : 'SVX'}` : '—'}</span>
+                </div>
+                <div>
+                  <span className="dim">Price impact</span>
+                  <span className={quote && quote.priceImpact > 0.05 ? 'down' : ''}>{quote ? `${(quote.priceImpact * 100).toFixed(2)}%` : '—'}</span>
                 </div>
                 <div>
                   <span className="dim">Fee</span>

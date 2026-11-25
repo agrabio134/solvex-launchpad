@@ -372,3 +372,16 @@ textarea.input { resize: vertical; }
   .flow { grid-template-columns: 1fr 1fr; }
   .hero-in { padding-top: 56px; }
 }
+
+/* ---------- chart, trades, admin ---------- */
+.up { color: var(--mint); }
+.down { color: var(--red); }
+.chart { display: flex; flex-direction: column; gap: 10px; }
+.chart-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.chart-top span:first-child { font-size: 16px; color: var(--paper); }
+.chart svg { width: 100%; height: 260px; display: block; cursor: crosshair; }
+.chart-empty { height: 160px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 12px; }
+.tbl-wrap { overflow-x: auto; }
+.tbl td.up, .tbl td.down { text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+.addr-box { background: var(--ink); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 16px; word-break: break-all; font-size: 15px; }
+.admin h2 { font-size: 24px; }

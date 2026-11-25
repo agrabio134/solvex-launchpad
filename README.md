@@ -11,6 +11,7 @@ A memecoin launchpad where every coin is priced in **$SVX**. It runs on Meteora'
 | `/coin/:mint` | Price, market cap, curve progress, buy/sell with a live quote and slippage, recent transactions, and a creator fee claim |
 | `/profile` | Coins launched from your wallet, with fee claims |
 | `/docs` | Docs |
+| `/admin` | One-time setup: create the Solvex bonding-curve config from your wallet; afterwards claim platform fees |
 
 ## How the DBC logic is laid out
 - `scripts/create-config.ts`: you run this once to create **the** Solvex DBC config. It sets $SVX as the quote mint, the curve (launch and graduation market cap), the fees and the creator share, and 100% locked LP. Graduation migrates to DAMM v2.
@@ -19,29 +20,30 @@ A memecoin launchpad where every coin is priced in **$SVX**. It runs on Meteora'
   - `buildLaunchTx`: `createPoolWithFirstBuy`, where the new mint keypair co-signs
   - `quoteSwap` / `buildSwapTx`: `swapQuote` and `swap` (buy = SVX → coin, sell = coin → SVX)
   - `buildClaimCreatorFeeTx`: `claimCreatorTradingFee`
-- `api/upload.ts`: a Vercel function that pins the image and metadata JSON to IPFS through Pinata, so the JWT stays on the server.
+- `api/upload.ts`: a Vercel function that stores the coin image and metadata JSON in Vercel Blob (token injected by the connected Blob store).
+- Trades and the price chart are rebuilt from the pool's recent on-chain transactions.
 - `scripts/claim-partner-fees.ts`: claims the Solvex share of fees from every pool.
 
 ## Setup
 ```bash
 npm install --legacy-peer-deps
-cp .env.example .env          # fill in RPC, SVX mint + decimals
+cp .env.example .env          # fill in RPC (+ SVX mint)
 
-# 1. create the launchpad config (dry run first, then for real)
-npm run create-config
-npm run create-config -- --send     # needs PARTNER_KEYPAIR (a JSON keypair with SOL)
-#    -> put the printed key in VITE_DBC_CONFIG
+# 1. create the launchpad config: open /admin, connect the wallet that should
+#    receive platform fees, enter the $SVX mint and curve settings, sign.
+#    (CLI alternative: npm run create-config -- --send with PARTNER_KEYPAIR)
+#    -> put the printed address in VITE_DBC_CONFIG and redeploy
 
 # 2. run it (vercel dev also serves /api/upload)
 npx vercel dev
 ```
 Optional curve and fee settings for the config script go in `.env`: `INITIAL_MCAP_SVX` (default 30,000), `MIGRATION_MCAP_SVX` (400,000), `TRADING_FEE_BPS` (100 = 1%), `CREATOR_FEE_PCT` (50), `POOL_CREATION_FEE_SVX` (0). Once a config exists on-chain, its parameters can't be changed. To change them, create a new config.
 
-While `VITE_DBC_CONFIG` or `VITE_SVX_MINT` is empty, the app runs in **preview mode**. It shows sample coins under a banner and turns trading off.
+Until `VITE_DBC_CONFIG` is set, the landing page is live and the app pages show an "opening soon" screen. There is no demo data.
 
 ## Deploy (Vercel)
 1. Import the repo.
-2. Add every `VITE_*` variable and `PINATA_JWT`.
-3. Deploy. `vercel.json` already handles SPA routing.
+2. Add `VITE_RPC_URL` and `VITE_DBC_CONFIG` (and optionally `VITE_SVX_MINT`, `VITE_X_URL`, `VITE_TG_URL`).
+3. Connect a Vercel Blob store (for uploads) and deploy. `vercel.json` already handles SPA routing.
 
 Use a paid RPC such as Helius or Triton. The board calls `getProgramAccounts`, and the public RPC rate-limits it.

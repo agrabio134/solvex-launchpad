@@ -1,29 +1,31 @@
 /**
  * All Meteora Dynamic Bonding Curve logic for Solvex lives here.
  *
- *  - one DBC config (VITE_DBC_CONFIG) = the Solvex launchpad. Quote mint is $SVX.
+ *  - one DBC config (VITE_DBC_CONFIG) = the Solvex launchpad. Its quote mint is $SVX.
  *  - every coin = one DBC virtual pool on that config.
- *  - when a pool's SVX reserve hits the config's migrationQuoteThreshold the curve
- *    completes and Meteora's keeper migrates it to a DAMM v2 pool on Solana (graduation).
+ *  - when a pool's SVX reserve reaches the config's migrationQuoteThreshold the curve
+ *    completes and Meteora's keeper migrates it to a locked DAMM v2 pool on Solana.
  */
 import BN from 'bn.js'
+import { Connection, Keypair, PublicKey, Transaction, type Commitment, type ParsedTransactionWithMeta } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync, getMint, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
-  Connection,
-  Keypair,
-  PublicKey,
-  Transaction,
-  type Commitment,
-} from '@solana/web3.js'
-import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
-import {
+  ActivationType,
+  BaseFeeMode,
+  buildCurveWithMarketCap,
+  CollectFeeMode,
   DynamicBondingCurveClient,
   getCurrentPoint,
   getPriceFromSqrtPrice,
+  MigrationFeeOption,
+  MigrationOption,
+  TokenAuthorityOption,
+  TokenDecimal,
+  TokenType,
   type PoolConfig,
   type VirtualPool,
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { DBC_CONFIG, DEMO, FINAL_STRETCH_AT, SVX_DECIMALS, SVX_MINT } from './config'
-import { demoCoins } from './demo'
+import { DBC_CONFIG, FINAL_STRETCH_AT } from './config'
 
 export type CoinStatus = 'new' | 'final' | 'graduated'
 
@@ -50,6 +52,15 @@ export interface Coin {
   creatorFeeSvx: number
 }
 
+export interface Launchpad {
+  config: PoolConfig
+  quoteMint: PublicKey
+  quoteDecimals: number
+  feePct: number
+  creatorSharePct: number
+  thresholdSvx: number
+}
+
 const COMMITMENT: Commitment = 'confirmed'
 let _client: DynamicBondingCurveClient | null = null
 let _clientConn: Connection | null = null
@@ -61,19 +72,39 @@ export function dbc(connection: Connection) {
   return _client
 }
 
-/* ------------------------------------------------------------------ config */
+const toNum = (v: { toString(): string }, decimals: number) => Number(v.toString()) / 10 ** decimals
 
-let _config: PoolConfig | null = null
-export async function getLaunchConfig(connection: Connection): Promise<PoolConfig> {
-  if (_config) return _config
-  if (!DBC_CONFIG) throw new Error('VITE_DBC_CONFIG is not set')
-  const cfg = await dbc(connection).state.getPoolConfig(DBC_CONFIG)
-  if (!cfg) throw new Error('DBC config account not found on this RPC')
-  _config = cfg
-  return cfg
+/* --------------------------------------------------------------- launchpad */
+
+let _lp: Promise<Launchpad> | null = null
+/** Reads the Solvex DBC config once: quote mint ($SVX), its decimals, fees and graduation threshold. */
+export function getLaunchpad(connection: Connection): Promise<Launchpad> {
+  if (!_lp) {
+    _lp = (async () => {
+      if (!DBC_CONFIG) throw new Error('VITE_DBC_CONFIG is not set')
+      const config = await dbc(connection).state.getPoolConfig(DBC_CONFIG)
+      if (!config) throw new Error('Launchpad config not found on this RPC')
+      const quoteMint = config.quoteMint
+      const decimals = await mintDecimals(connection, quoteMint)
+      return {
+        config,
+        quoteMint,
+        quoteDecimals: decimals,
+        feePct: Number(config.poolFees.baseFee.cliffFeeNumerator.toString()) / 1e7,
+        creatorSharePct: config.creatorTradingFeePercentage,
+        thresholdSvx: toNum(config.migrationQuoteThreshold, decimals),
+      }
+    })()
+    _lp.catch(() => (_lp = null))
+  }
+  return _lp
 }
 
-const toNum = (v: { toString(): string }, decimals: number) => Number(v.toString()) / 10 ** decimals
+export async function mintDecimals(connection: Connection, mint: PublicKey) {
+  const info = await connection.getAccountInfo(mint)
+  if (!info) throw new Error('Mint not found')
+  return (await getMint(connection, mint, COMMITMENT, info.owner)).decimals
+}
 
 /* -------------------------------------------------------- token metadata */
 
@@ -97,26 +128,20 @@ const jsonCache = new Map<string, Promise<any>>()
 function fetchJson(uri: string) {
   if (!uri) return Promise.resolve(null)
   if (!jsonCache.has(uri)) {
-    jsonCache.set(
-      uri,
-      fetch(uri)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null),
-    )
+    jsonCache.set(uri, fetch(uri).then((r) => (r.ok ? r.json() : null)).catch(() => null))
   }
   return jsonCache.get(uri)!
 }
 
 /* ------------------------------------------------------------------ coins */
 
-function toCoin(poolKey: PublicKey, vp: VirtualPool, cfg: PoolConfig, meta: { name: string; symbol: string; uri: string }): Coin {
+function toCoin(poolKey: PublicKey, vp: VirtualPool, lp: Launchpad, meta: { name: string; symbol: string; uri: string }): Coin {
   const pool = vp.poolState
-  const tokenDecimal = cfg.tokenDecimal
-  const priceSvx = Number(getPriceFromSqrtPrice(pool.sqrtPrice, tokenDecimal, SVX_DECIMALS).toString())
-  const supply = toNum(cfg.postMigrationTokenSupply, tokenDecimal) || 1_000_000_000
-  const reserveSvx = toNum(pool.quoteReserve, SVX_DECIMALS)
-  const thresholdSvx = toNum(cfg.migrationQuoteThreshold, SVX_DECIMALS)
-  const progress = thresholdSvx > 0 ? Math.min(1, reserveSvx / thresholdSvx) : 0
+  const cfg = lp.config
+  const priceSvx = Number(getPriceFromSqrtPrice(pool.sqrtPrice, cfg.tokenDecimal, lp.quoteDecimals).toString())
+  const supply = toNum(cfg.postMigrationTokenSupply, cfg.tokenDecimal) || 1_000_000_000
+  const reserveSvx = toNum(pool.quoteReserve, lp.quoteDecimals)
+  const progress = lp.thresholdSvx > 0 ? Math.min(1, reserveSvx / lp.thresholdSvx) : 0
   const migrated = pool.isMigrated === 1 || progress >= 1
   return {
     pool: poolKey.toBase58(),
@@ -128,17 +153,16 @@ function toCoin(poolKey: PublicKey, vp: VirtualPool, cfg: PoolConfig, meta: { na
     priceSvx,
     mcapSvx: priceSvx * supply,
     reserveSvx,
-    thresholdSvx,
+    thresholdSvx: lp.thresholdSvx,
     progress,
-    // activationType 1 = timestamp: activationPoint is the unix launch time
-    createdAt: cfg.activationType === 1 ? Number(pool.activationPoint.toString()) : undefined,
+    createdAt: cfg.activationType === ActivationType.Timestamp ? Number(pool.activationPoint.toString()) : undefined,
     migrated,
     status: migrated ? 'graduated' : progress >= FINAL_STRETCH_AT ? 'final' : 'new',
-    creatorFeeSvx: toNum(pool.creatorQuoteFee, SVX_DECIMALS),
+    creatorFeeSvx: toNum(pool.creatorQuoteFee, lp.quoteDecimals),
   }
 }
 
-async function attachMetadata(connection: Connection, rows: { key: PublicKey; pool: VirtualPool }[], cfg: PoolConfig) {
+async function attachMetadata(connection: Connection, rows: { key: PublicKey; pool: VirtualPool }[], lp: Launchpad) {
   const coins: Coin[] = []
   for (let i = 0; i < rows.length; i += 100) {
     const chunk = rows.slice(i, i + 100)
@@ -146,7 +170,7 @@ async function attachMetadata(connection: Connection, rows: { key: PublicKey; po
     chunk.forEach((r, j) => {
       const info = infos[j]
       const meta = info ? parseMetaplex(Buffer.from(info.data)) : { name: '', symbol: '', uri: '' }
-      coins.push(toCoin(r.key, r.pool, cfg, meta))
+      coins.push(toCoin(r.key, r.pool, lp, meta))
     })
   }
   await Promise.all(
@@ -155,9 +179,9 @@ async function attachMetadata(connection: Connection, rows: { key: PublicKey; po
       if (j) {
         c.image = j.image
         c.description = j.description
-        c.twitter = j.twitter ?? j.extensions?.twitter
-        c.telegram = j.telegram ?? j.extensions?.telegram
-        c.website = j.website ?? j.extensions?.website
+        c.twitter = j.twitter || j.extensions?.twitter
+        c.telegram = j.telegram || j.extensions?.telegram
+        c.website = j.website || j.extensions?.website
       }
     }),
   )
@@ -165,23 +189,17 @@ async function attachMetadata(connection: Connection, rows: { key: PublicKey; po
 }
 
 export async function fetchCoins(connection: Connection): Promise<Coin[]> {
-  if (DEMO) return demoCoins()
-  const cfg = await getLaunchConfig(connection)
+  const lp = await getLaunchpad(connection)
   const pools = await dbc(connection).state.getPoolsByConfig(DBC_CONFIG!)
-  const coins = await attachMetadata(
-    connection,
-    pools.map((p) => ({ key: p.publicKey, pool: p.account })),
-    cfg,
-  )
+  const coins = await attachMetadata(connection, pools.map((p) => ({ key: p.publicKey, pool: p.account })), lp)
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
 }
 
 export async function fetchCoin(connection: Connection, mintOrPool: string): Promise<Coin | null> {
-  if (DEMO) return demoCoins().find((c) => c.mint === mintOrPool || c.pool === mintOrPool) ?? null
-  const cfg = await getLaunchConfig(connection)
+  const lp = await getLaunchpad(connection)
   const client = dbc(connection)
   let key: PublicKey
-  let pool: VirtualPool | null = null
+  let pool: VirtualPool | null
   const byMint = await client.state.getPoolByBaseMint(mintOrPool).catch(() => null)
   if (byMint) {
     key = byMint.publicKey
@@ -190,17 +208,73 @@ export async function fetchCoin(connection: Connection, mintOrPool: string): Pro
     key = new PublicKey(mintOrPool)
     pool = await client.state.getPool(key)
   }
-  if (!pool) return null
-  const [coin] = await attachMetadata(connection, [{ key, pool }], cfg)
+  if (!pool || !pool.poolState.config.equals(DBC_CONFIG!)) return null
+  const [coin] = await attachMetadata(connection, [{ key, pool }], lp)
   return coin
 }
 
 export async function fetchCoinsByCreator(connection: Connection, creator: PublicKey): Promise<Coin[]> {
-  if (DEMO) return demoCoins().slice(0, 2)
-  const cfg = await getLaunchConfig(connection)
+  const lp = await getLaunchpad(connection)
   const pools = await dbc(connection).state.getPoolsByCreator(creator)
   const mine = pools.filter((p) => p.account.poolState.config.equals(DBC_CONFIG!))
-  return attachMetadata(connection, mine.map((p) => ({ key: p.publicKey, pool: p.account })), cfg)
+  return attachMetadata(connection, mine.map((p) => ({ key: p.publicKey, pool: p.account })), lp)
+}
+
+/* ---------------------------------------------------------------- trades */
+
+export interface Trade {
+  sig: string
+  time: number
+  side: 'buy' | 'sell'
+  trader: string
+  tokens: number
+  svx: number
+  price: number
+}
+
+const WSOL = 'So11111111111111111111111111111111111111112'
+
+/** Recent swaps on a pool, reconstructed from the trader's token balance changes. Newest first. */
+export async function fetchTrades(connection: Connection, coin: Coin, limit = 60): Promise<Trade[]> {
+  const lp = await getLaunchpad(connection)
+  const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.pool), { limit })).filter((s) => !s.err)
+  const txs: (ParsedTransactionWithMeta | null)[] = []
+  for (let i = 0; i < sigs.length; i += 20) {
+    const batch = await connection.getParsedTransactions(
+      sigs.slice(i, i + 20).map((s) => s.signature),
+      { maxSupportedTransactionVersion: 0, commitment: 'confirmed' },
+    )
+    txs.push(...batch)
+  }
+  const svxMint = lp.quoteMint.toBase58()
+  const trades: Trade[] = []
+  txs.forEach((tx, i) => {
+    const meta = tx?.meta
+    if (!tx || !meta || meta.err) return
+    const trader = tx.transaction.message.accountKeys.find((k) => k.signer)?.pubkey.toBase58()
+    if (!trader) return
+    const delta = (mint: string) => {
+      const sum = (arr: NonNullable<typeof meta.preTokenBalances>) =>
+        arr.filter((b) => b.mint === mint && b.owner === trader).reduce((s, b) => s + (b.uiTokenAmount.uiAmount ?? 0), 0)
+      return sum(meta.postTokenBalances ?? []) - sum(meta.preTokenBalances ?? [])
+    }
+    const dTok = delta(coin.mint)
+    if (!dTok) return
+    let dSvx = delta(svxMint)
+    if (!dSvx && svxMint === WSOL) dSvx = (meta.postBalances[0] - meta.preBalances[0] + meta.fee) / 1e9
+    const tokens = Math.abs(dTok)
+    const svx = Math.abs(dSvx)
+    trades.push({
+      sig: sigs[i].signature,
+      time: tx.blockTime ?? sigs[i].blockTime ?? 0,
+      side: dTok > 0 ? 'buy' : 'sell',
+      trader,
+      tokens,
+      svx,
+      price: tokens ? svx / tokens : 0,
+    })
+  })
+  return trades
 }
 
 /* ---------------------------------------------------------------- launch */
@@ -212,22 +286,21 @@ export interface LaunchInput {
   firstBuySvx: number
 }
 
-/** Builds the create-pool (+ optional first buy) transaction. Returns the tx and the new mint keypair (must co-sign). */
+/** Create-pool (+ optional first buy, same tx). Returns the tx and the new mint keypair, which co-signs. */
 export async function buildLaunchTx(connection: Connection, creator: PublicKey, input: LaunchInput) {
-  if (!DBC_CONFIG) throw new Error('Launchpad config missing')
+  const lp = await getLaunchpad(connection)
   const mint = Keypair.generate()
-  const createPoolParam = {
-    name: input.name,
-    symbol: input.symbol,
-    uri: input.uri,
-    payer: creator,
-    poolCreator: creator,
-    config: DBC_CONFIG,
-    baseMint: mint.publicKey,
-  }
-  const buyAmount = new BN(Math.floor(input.firstBuySvx * 10 ** SVX_DECIMALS))
+  const buyAmount = new BN(Math.floor(input.firstBuySvx * 10 ** lp.quoteDecimals).toString())
   const tx = await dbc(connection).creator.createPoolWithFirstBuy({
-    createPoolParam,
+    createPoolParam: {
+      name: input.name,
+      symbol: input.symbol,
+      uri: input.uri,
+      payer: creator,
+      poolCreator: creator,
+      config: DBC_CONFIG!,
+      baseMint: mint.publicKey,
+    },
     firstBuyParam: buyAmount.gtn(0)
       ? { buyer: creator, buyAmount, minimumAmountOut: new BN(0), referralTokenAccount: null }
       : undefined,
@@ -244,24 +317,19 @@ export interface Quote {
   minOut: BN
   fee: number
   amountInRaw: BN
+  priceImpact: number
 }
 
-export async function quoteSwap(
-  connection: Connection,
-  poolAddr: string,
-  side: 'buy' | 'sell',
-  amountIn: number,
-  slippageBps: number,
-): Promise<Quote> {
+export async function quoteSwap(connection: Connection, poolAddr: string, side: 'buy' | 'sell', amountIn: number, slippageBps: number): Promise<Quote> {
+  const lp = await getLaunchpad(connection)
   const client = dbc(connection)
   const pool = await client.state.getPool(poolAddr)
   if (!pool) throw new Error('Pool not found')
-  const cfg = await client.state.getPoolConfig(pool.poolState.config)
-  if (!cfg) throw new Error('Config not found')
+  const cfg = lp.config
   const sell = side === 'sell'
-  const inDecimals = sell ? cfg.tokenDecimal : SVX_DECIMALS
-  const outDecimals = sell ? SVX_DECIMALS : cfg.tokenDecimal
-  const amountInRaw = new BN(Math.floor(amountIn * 10 ** inDecimals).toString())
+  const inDec = sell ? cfg.tokenDecimal : lp.quoteDecimals
+  const outDec = sell ? lp.quoteDecimals : cfg.tokenDecimal
+  const amountInRaw = new BN(Math.floor(amountIn * 10 ** inDec).toString())
   const currentPoint = await getCurrentPoint(connection, cfg.activationType)
   const q = client.pool.swapQuote({
     virtualPool: pool,
@@ -273,21 +341,19 @@ export async function quoteSwap(
     eligibleForFirstSwapWithMinFee: false,
     currentPoint,
   })
+  const amountOut = toNum(q.outputAmount, outDec)
+  const spot = Number(getPriceFromSqrtPrice(pool.poolState.sqrtPrice, cfg.tokenDecimal, lp.quoteDecimals).toString())
+  const exec = sell ? (amountIn ? amountOut / amountIn : 0) : amountOut ? amountIn / amountOut : 0
   return {
-    amountOut: toNum(q.outputAmount, outDecimals),
+    amountOut,
     minOut: q.minimumAmountOut,
-    fee: toNum(q.tradingFee, SVX_DECIMALS), // config collects fees in SVX
+    fee: toNum(q.tradingFee, lp.quoteDecimals),
     amountInRaw,
+    priceImpact: spot && exec ? Math.abs(exec / spot - 1) : 0,
   }
 }
 
-export async function buildSwapTx(
-  connection: Connection,
-  owner: PublicKey,
-  poolAddr: string,
-  side: 'buy' | 'sell',
-  quote: Quote,
-) {
+export async function buildSwapTx(connection: Connection, owner: PublicKey, poolAddr: string, side: 'buy' | 'sell', quote: Quote) {
   const tx = await dbc(connection).pool.swap({
     owner,
     pool: new PublicKey(poolAddr),
@@ -317,6 +383,97 @@ export async function buildClaimCreatorFeeTx(connection: Connection, creator: Pu
   return tx
 }
 
+/* ---------------------------------------------------------- admin: config */
+
+export interface CurveSettings {
+  quoteMint: PublicKey
+  quoteDecimals: number
+  initialMcap: number
+  migrationMcap: number
+  feeBps: number
+  creatorSharePct: number
+  poolCreationFee: number
+}
+
+export function buildCurve(s: CurveSettings) {
+  return buildCurveWithMarketCap({
+    token: {
+      tokenType: TokenType.SPLToken,
+      tokenBaseDecimal: TokenDecimal.SIX,
+      tokenQuoteDecimal: s.quoteDecimals,
+      tokenAuthorityOption: TokenAuthorityOption.Immutable,
+      totalTokenSupply: 1_000_000_000,
+      leftover: 0,
+    },
+    fee: {
+      baseFeeParams: {
+        baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
+        feeSchedulerParam: { startingFeeBps: s.feeBps, endingFeeBps: s.feeBps, numberOfPeriod: 0, totalDuration: 0 },
+      },
+      dynamicFeeEnabled: true,
+      collectFeeMode: CollectFeeMode.QuoteToken,
+      creatorTradingFeePercentage: s.creatorSharePct,
+      poolCreationFee: s.poolCreationFee,
+      enableFirstSwapWithMinFee: false,
+    },
+    migration: {
+      migrationOption: MigrationOption.MET_DAMM_V2,
+      migrationFeeOption: MigrationFeeOption.FixedBps100,
+      migrationFee: { feePercentage: 0, creatorFeePercentage: 0 },
+    },
+    // 100% of graduated LP permanently locked, split between Solvex and the creator
+    liquidityDistribution: {
+      partnerPermanentLockedLiquidityPercentage: 50,
+      partnerLiquidityPercentage: 0,
+      creatorPermanentLockedLiquidityPercentage: 50,
+      creatorLiquidityPercentage: 0,
+    },
+    lockedVesting: { totalLockedVestingAmount: 0, numberOfVestingPeriod: 0, cliffUnlockAmount: 0, totalVestingDuration: 0, cliffDurationFromMigrationTime: 0 },
+    activationType: ActivationType.Timestamp,
+    initialMarketCap: s.initialMcap,
+    migrationMarketCap: s.migrationMcap,
+  })
+}
+
+/** The connected wallet becomes fee claimer + leftover receiver. Returns tx + new config address (co-signed). */
+export async function buildCreateConfigTx(connection: Connection, admin: PublicKey, s: CurveSettings) {
+  const curve = buildCurve(s)
+  const configKp = Keypair.generate()
+  const tx = await dbc(connection).partner.createConfig({
+    ...curve,
+    config: configKp.publicKey,
+    feeClaimer: admin,
+    leftoverReceiver: admin,
+    quoteMint: s.quoteMint,
+    payer: admin,
+  })
+  await finalize(connection, tx, admin)
+  tx.partialSign(configKp)
+  return { tx, config: configKp.publicKey }
+}
+
+/** Partner (Solvex) fee claims for every pool with unclaimed fees, one tx per pool. */
+export async function buildPartnerClaimTxs(connection: Connection, admin: PublicKey) {
+  const client = dbc(connection)
+  const pools = await client.state.getPoolsByConfig(DBC_CONFIG!)
+  const out: { pool: string; tx: Transaction }[] = []
+  for (const { publicKey, account } of pools) {
+    const q = new BN(account.poolState.partnerQuoteFee.toString())
+    const b = new BN(account.poolState.partnerBaseFee.toString())
+    if (q.isZero() && b.isZero()) continue
+    const tx = await client.partner.claimPartnerTradingFee({ pool: publicKey, feeClaimer: admin, payer: admin, maxBaseAmount: b, maxQuoteAmount: q })
+    await finalize(connection, tx, admin)
+    out.push({ pool: publicKey.toBase58(), tx })
+  }
+  return out
+}
+
+export async function partnerFeesOwed(connection: Connection) {
+  const lp = await getLaunchpad(connection)
+  const pools = await dbc(connection).state.getPoolsByConfig(DBC_CONFIG!)
+  return pools.reduce((s, p) => s + toNum(p.account.poolState.partnerQuoteFee, lp.quoteDecimals), 0)
+}
+
 /* -------------------------------------------------------------- balances */
 
 export async function tokenBalance(connection: Connection, owner: PublicKey, mint: PublicKey): Promise<number> {
@@ -328,12 +485,9 @@ export async function tokenBalance(connection: Connection, owner: PublicKey, min
   return 0
 }
 
-export const svxBalance = (connection: Connection, owner: PublicKey) =>
-  SVX_MINT ? tokenBalance(connection, owner, SVX_MINT) : Promise.resolve(0)
-
-export async function recentActivity(connection: Connection, poolAddr: string) {
-  if (DEMO) return []
-  return connection.getSignaturesForAddress(new PublicKey(poolAddr), { limit: 15 })
+export async function svxBalance(connection: Connection, owner: PublicKey) {
+  const lp = await getLaunchpad(connection)
+  return tokenBalance(connection, owner, lp.quoteMint)
 }
 
 /* ---------------------------------------------------------------- helpers */

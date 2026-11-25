@@ -2,13 +2,14 @@ import { useEffect } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import Header from './components/Header'
 import Footer from './components/Footer'
+import Gate from './components/Gate'
 import Home from './pages/Home'
 import Board from './pages/Board'
 import Launch from './pages/Launch'
 import Token from './pages/Token'
 import Profile from './pages/Profile'
 import Docs from './pages/Docs'
-import { DEMO } from './lib/config'
+import Admin from './pages/Admin'
 
 export default function App() {
   const { pathname, hash } = useLocation()
@@ -18,20 +19,16 @@ export default function App() {
 
   return (
     <>
-      {DEMO && (
-        <div className="demo-banner">
-          Preview mode — sample coins shown. Set <code>VITE_SVX_MINT</code> and <code>VITE_DBC_CONFIG</code> to go live.
-        </div>
-      )}
       <Header />
       <main>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/board" element={<Board />} />
-          <Route path="/launch" element={<Launch />} />
-          <Route path="/coin/:id" element={<Token />} />
-          <Route path="/profile" element={<Profile />} />
+          <Route path="/board" element={<Gate><Board /></Gate>} />
+          <Route path="/launch" element={<Gate><Launch /></Gate>} />
+          <Route path="/coin/:id" element={<Gate><Token /></Gate>} />
+          <Route path="/profile" element={<Gate><Profile /></Gate>} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom'
-import { SVX_MINT, TG_URL, X_URL } from '../lib/config'
+import { TG_URL, X_URL } from '../lib/config'
+import { useLaunchpad } from '../lib/hooks'
 import Logo from './Logo'
 
 export default function Footer() {
+  const { svxMint } = useLaunchpad()
   return (
     <footer className="ftr">
       <div className="ftr-in">
@@ -28,8 +30,8 @@ export default function Footer() {
           </div>
           <div>
             <h5>$SVX</h5>
-            {SVX_MINT && (
-              <a href={`https://jup.ag/swap/SOL-${SVX_MINT.toBase58()}`} target="_blank" rel="noreferrer">
+            {svxMint && (
+              <a href={`https://jup.ag/swap/SOL-${svxMint}`} target="_blank" rel="noreferrer">
                 Buy $SVX
               </a>
             )}
