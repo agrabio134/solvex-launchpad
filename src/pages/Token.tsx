@@ -3,34 +3,20 @@ import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { PublicKey } from '@solana/web3.js'
-import {
-  buildClaimFees,
-  buildClaimLpFees,
-  buildMigrate,
-  fetchCoin,
-  fetchTrades,
-  prepareSwap,
-  svxBalance,
-  tokenBalance,
-  type Coin,
-  type Prepared,
-  type Trade,
-} from '../lib/dbc'
-import { PLATFORM_WALLET, Q, QUOTE_MINT, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
+import { buildClaimFees, buildClaimLpFees, buildMigrate, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/dbc'
+import { PLATFORM_WALLET, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
-import { errMsg, useLaunchpad, useSubmit } from '../lib/hooks'
+import { errMsg, useAssets, useSubmit, useUsd } from '../lib/hooks'
 import { useToast } from '../components/Toast'
-import { CoinAvatar, Progress } from '../components/CoinCard'
+import { CoinImg, PairTag, Progress, StatusBadge, usd as fmtUsd } from '../components/Bits'
 import PriceChart from '../components/PriceChart'
-
-const PRESETS = { buy: Q === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['100', '500', '1000', '5000'], sell: ['25%', '50%', '75%', '100%'] }
 
 export default function Token() {
   const { id = '' } = useParams()
   const { connection } = useConnection()
   const { publicKey } = useWallet()
   const { setVisible } = useWalletModal()
-  const { usd } = useLaunchpad()
+  const { find, symbol: symOf } = useAssets()
   const submit = useSubmit()
   const toast = useToast()
 
@@ -43,9 +29,11 @@ export default function Token() {
   const [quoteErr, setQuoteErr] = useState('')
   const [quoting, setQuoting] = useState(false)
   const [status, setStatus] = useState('')
-  const [bal, setBal] = useState({ svx: 0, token: 0 })
+  const [bal, setBal] = useState({ quote: 0, token: 0 })
   const [trades, setTrades] = useState<Trade[]>([])
   const [copied, setCopied] = useState(false)
+  const [eligible, setEligible] = useState(false)
+  const usd = useUsd(coin?.quoteMint)
 
   const load = useCallback(async () => {
     try {
@@ -54,15 +42,15 @@ export default function Token() {
       setMissing(!c)
       if (c) fetchTrades(connection, c).then(setTrades).catch(() => {})
     } catch {
-      setMissing((m) => m || false)
+      /* keep the last good state */
     }
   }, [connection, id])
 
   const loadBal = useCallback(async () => {
     if (!publicKey || !coin) return
-    const [svx, token] = await Promise.all([svxBalance(connection, publicKey), tokenBalance(connection, publicKey, new PublicKey(coin.mint))])
-    setBal({ svx, token })
-  }, [connection, publicKey, coin?.mint])
+    const [q, t] = await Promise.all([quoteBalance(connection, publicKey, coin.quoteMint), tokenBalance(connection, publicKey, new PublicKey(coin.mint))])
+    setBal({ quote: q, token: t })
+  }, [connection, publicKey, coin?.mint, coin?.quoteMint])
 
   useEffect(() => {
     load()
@@ -73,15 +61,13 @@ export default function Token() {
     loadBal()
   }, [loadBal])
 
-  // live quote (builds the real transaction, refreshed while typing)
   useEffect(() => {
     setQuote(null)
     setQuoteErr('')
     if (!coin || !Number(amount) || (coin.complete && !coin.migrated)) return
-    const owner = publicKey ?? PLATFORM_WALLET
     setQuoting(true)
     const t = setTimeout(() => {
-      prepareSwap(connection, coin, side, amount, slippage * 100, owner)
+      prepareSwap(connection, coin, side, amount, slippage * 100, publicKey ?? PLATFORM_WALLET)
         .then(setQuote)
         .catch((e) => setQuoteErr(errMsg(e)))
         .finally(() => setQuoting(false))
@@ -92,30 +78,38 @@ export default function Token() {
   if (missing)
     return (
       <div className="wrap page">
-        <div className="notice">
-          This coin isn't a Solvex market. <Link to="/board">Back to the board</Link>
+        <div className="surface empty">
+          <h3>This coin isn’t on Solvex</h3>
+          <p>Check the address, or browse every market instead.</p>
+          <Link to="/markets" className="btn btn-primary">
+            Browse markets
+          </Link>
         </div>
       </div>
     )
   if (!coin)
     return (
       <div className="wrap page">
-        <div className="coin skeleton tall" />
+        <div className="skeleton" style={{ height: 80, marginBottom: 18 }} />
+        <div className="skeleton" style={{ height: 360 }} />
       </div>
     )
 
-  const me = publicKey?.toBase58()
-  const isCreator = me === coin.creator
+  const q = symOf(coin.quoteMint)
+  const isStock = find(coin.quoteMint)?.category === 'stock'
+  const isCreator = publicKey?.toBase58() === coin.creator
   const isPlatform = !!publicKey && publicKey.equals(PLATFORM_WALLET)
   const needsMigration = coin.complete && !coin.migrated
   const busy = !!status
+  const presets = side === 'sell' ? ['25%', '50%', '75%', '100%'] : q === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['10', '50', '100', '500']
+  const fees = isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx
 
-  const run = async (label: string, fn: () => Promise<string | void>) => {
+  const run = async (label: string, fn: () => Promise<string | void>, done: string) => {
     if (!publicKey) return setVisible(true)
     try {
       setStatus(label)
       const sig = await fn()
-      if (sig) toast('ok', 'Done', sig)
+      if (sig) toast('ok', done, sig)
       setAmount('')
       await load()
       await loadBal()
@@ -127,146 +121,152 @@ export default function Token() {
   }
 
   const trade = () =>
-    run('Preparing…', async () => {
-      const n = Number(amount)
-      if (!n) return
-      if (side === 'buy' && n > bal.svx) throw new Error(`Not enough ${Q}`)
-      if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
-      const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
-      return submit(p.tx, [], setStatus)
-    })
-
-  const migrate = () =>
-    run('Preparing migration…', async () => {
-      const m = await buildMigrate(connection, coin, publicKey!)
-      return submit(m.tx, m.signers, setStatus)
-    })
-
-  const claim = () =>
-    run('Preparing claim…', async () => submit(await buildClaimFees(connection, coin, publicKey!), [], setStatus))
-
-  const claimLp = () =>
-    run('Preparing claim…', async () => {
-      const txs = await buildClaimLpFees(connection, coin, publicKey!)
-      let last = ''
-      for (const tx of txs) last = await submit(tx, [], setStatus)
-      return last
-    })
-
-  const preset = (p: string) => {
-    if (side === 'buy') return setAmount(p)
-    const f = parseInt(p) / 100
-    setAmount(String(Math.floor(bal.token * f * 1e6) / 1e6))
-  }
-
-  const statusLabel = coin.migrated ? 'On Solana' : coin.complete ? 'Curve complete' : coin.status === 'final' ? 'Final stretch' : 'New'
+    run(
+      'Preparing…',
+      async () => {
+        const n = Number(amount)
+        if (!n) return
+        if (side === 'buy' && n > bal.quote) throw new Error(`Not enough ${q}`)
+        if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
+        const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
+        return submit(p.tx, [], setStatus)
+      },
+      side === 'buy' ? `Bought $${coin.symbol}` : `Sold $${coin.symbol}`,
+    )
 
   return (
-    <div className="wrap page token">
-      <Link to="/board" className="back dim">
-        ← Board
+    <div className="wrap page">
+      <Link to="/markets" className="back">
+        Back to markets
       </Link>
 
-      <div className="token-head">
-        <CoinAvatar coin={coin} size={84} />
+      <div className="coin-head">
+        <CoinImg coin={coin} size={76} />
         <div>
-          <div className="token-title">
-            <h1>${coin.symbol}</h1>
-            <span className={`tag tag-${coin.status === 'graduated' ? 'grad' : coin.status}`}>{statusLabel}</span>
+          <h1>{coin.name}</h1>
+          <div className="meta">
+            <b>${coin.symbol}</b>
+            <PairTag mint={coin.quoteMint} />
+            <StatusBadge coin={coin} />
+            <button
+              className="copy"
+              onClick={() => {
+                navigator.clipboard.writeText(coin.mint)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1200)
+              }}
+            >
+              {copied ? 'Copied' : short(coin.mint, 5)}
+            </button>
           </div>
-          <div className="dim">{coin.name}</div>
-          <button
-            className="ca mono small"
-            onClick={() => {
-              navigator.clipboard.writeText(coin.mint)
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
-            }}
-          >
-            {short(coin.mint, 6)} {copied ? '✓' : '⧉'}
-          </button>
         </div>
         <div className="socials">
-          {coin.twitter && <a href={coin.twitter} target="_blank" rel="noreferrer">X</a>}
-          {coin.telegram && <a href={coin.telegram} target="_blank" rel="noreferrer">TG</a>}
-          {coin.website && <a href={coin.website} target="_blank" rel="noreferrer">Web</a>}
+          {coin.twitter && (
+            <a className="btn btn-ghost btn-sm" href={coin.twitter} target="_blank" rel="noreferrer">
+              X
+            </a>
+          )}
+          {coin.telegram && (
+            <a className="btn btn-ghost btn-sm" href={coin.telegram} target="_blank" rel="noreferrer">
+              Telegram
+            </a>
+          )}
+          {coin.website && (
+            <a className="btn btn-ghost btn-sm" href={coin.website} target="_blank" rel="noreferrer">
+              Website
+            </a>
+          )}
         </div>
       </div>
 
-      <div className="token-grid">
-        <div className="token-main">
-          <div className="kpis">
-            <Kpi label="Price" value={usd ? `$${price(coin.priceSvx * usd)}` : `${price(coin.priceSvx)} ${Q}`} />
-            <Kpi label="Market cap" value={usd ? `$${compact(coin.mcapSvx * usd)}` : `${compact(coin.mcapSvx)} ${Q}`} />
-            <Kpi label="In curve" value={`${compact(coin.reserveSvx)} ${Q}`} />
-            <Kpi label="Age" value={ago(coin.createdAt)} />
-          </div>
-
-          <div className="panel">
-            <PriceChart trades={trades} current={coin.priceSvx} usd={usd} symbol={coin.symbol} />
-          </div>
-
-          <div className="panel">
-            <div className="curve-head">
-              <b>Bonding curve</b>
-              <span className="mono">{coin.complete ? 'Complete' : pct(coin.progress)}</span>
+      <div className="coin-grid">
+        <div className="coin-main">
+          <div className="surface stats">
+            <div>
+              <span>Price</span>
+              <b>{usd ? `$${price(coin.priceSvx * usd)}` : `${price(coin.priceSvx)} ${q}`}</b>
             </div>
-            <Progress value={coin.progress} graduated={coin.complete} />
-            <p className="dim small">
+            <div>
+              <span>Market cap</span>
+              <b>{usd ? fmtUsd(coin.mcapSvx * usd) : `${compact(coin.mcapSvx)} ${q}`}</b>
+            </div>
+            <div>
+              <span>In the curve</span>
+              <b>
+                {compact(coin.reserveSvx)} {q}
+              </b>
+            </div>
+            <div>
+              <span>Age</span>
+              <b>{ago(coin.createdAt)}</b>
+            </div>
+          </div>
+
+          <div className="surface">
+            <PriceChart trades={trades} current={coin.priceSvx} usd={usd} symbol={coin.symbol} quote={q} />
+          </div>
+
+          <div className="surface pad stack curve">
+            <div className="kv">
+              <h3>{coin.migrated ? 'Graduated to Solana' : coin.complete ? 'Curve complete' : 'Bonding curve'}</h3>
+              <b>{coin.complete ? '100%' : pct(coin.progress)}</b>
+            </div>
+            <Progress value={coin.progress} done={coin.complete} />
+            <p className="muted">
               {coin.migrated
-                ? 'Graduated. Liquidity sits in a locked Meteora DAMM v2 pool on Solana, and trades here route through it.'
+                ? 'Liquidity now sits in a locked Meteora DAMM v2 pool. Trades on this page route through it.'
                 : coin.complete
-                  ? 'The curve is full. Anyone can migrate it to Solana; trading resumes there right after.'
-                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} ${Q} more and $${coin.symbol} graduates to Solana.`}
+                  ? 'The curve is full. Anyone can migrate it to Solana, and trading resumes there straight after.'
+                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} ${q} more and $${coin.symbol} graduates to Solana.`}
             </p>
           </div>
 
           {coin.description && (
-            <div className="panel">
-              <b>About</b>
-              <p className="dim">{coin.description}</p>
+            <div className="surface pad stack">
+              <h3>About</h3>
+              <p className="muted">{coin.description}</p>
             </div>
           )}
 
-          <div className="panel">
-            <div className="curve-head">
-              <b>Trades</b>
-              <a className="dim small" href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer">
-                Pool on explorer ↗
+          <div className="surface">
+            <div className="chart-head" style={{ paddingBottom: 12 }}>
+              <b>Recent trades</b>
+              <a className="link small" href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer">
+                View pool on Solscan
               </a>
             </div>
             {trades.length === 0 ? (
-              <p className="dim small">No trades yet. Be the first.</p>
+              <p className="muted" style={{ padding: '0 20px 20px' }}>
+                No trades to show yet.
+              </p>
             ) : (
               <div className="tbl-wrap">
-                <table className="tbl mono">
+                <table className="tbl">
                   <thead>
                     <tr>
-                      <th>Age</th>
-                      <th>Type</th>
-                      <th>{Q}</th>
+                      <th>Time</th>
+                      <th>Side</th>
+                      <th>{q}</th>
                       <th>{coin.symbol}</th>
-                      <th>Price</th>
                       <th>Trader</th>
-                      <th />
+                      <th className="right">Tx</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trades.map((t) => (
                       <tr key={t.sig}>
-                        <td>{ago(t.time)}</td>
-                        <td className={t.side === 'buy' ? 'up' : 'down'}>{t.side}</td>
+                        <td>{ago(t.time)} ago</td>
+                        <td className={`side-tag ${t.side === 'buy' ? 'up' : 'down'}`}>{t.side}</td>
                         <td>{compact(t.svx)}</td>
                         <td>{compact(t.tokens)}</td>
-                        <td>{price(t.price)}</td>
                         <td>
                           <a href={explorerAddr(t.trader)} target="_blank" rel="noreferrer">
                             {short(t.trader)}
                           </a>
                         </td>
                         <td className="right">
-                          <a href={explorerTx(t.sig)} target="_blank" rel="noreferrer">
-                            ↗
+                          <a className="link" href={explorerTx(t.sig)} target="_blank" rel="noreferrer">
+                            View
                           </a>
                         </td>
                       </tr>
@@ -278,18 +278,18 @@ export default function Token() {
           </div>
         </div>
 
-        <aside className="token-side">
+        <aside className="coin-side">
           {needsMigration ? (
-            <div className="panel">
-              <b>Ready to graduate</b>
-              <p className="dim small">The curve is full. Migrating moves its liquidity into a locked Meteora DAMM v2 pool so trading continues on Solana. Anyone can do it; you pay only network fees.</p>
-              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={migrate}>
+            <div className="surface pad stack">
+              <h3>Ready to graduate</h3>
+              <p className="muted">Migrating moves the curve’s liquidity into a locked Meteora DAMM v2 pool so trading continues on Solana. Anyone can do it and only pays network fees.</p>
+              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={() => run('Preparing migration…', async () => { const m = await buildMigrate(connection, coin, publicKey!); return submit(m.tx, m.signers, setStatus) }, 'Migrated to Solana')}>
                 {!publicKey ? 'Connect wallet' : status || 'Migrate to Solana'}
               </button>
             </div>
           ) : (
-            <div className="panel trade">
-              <div className="seg seg-full">
+            <div className="surface trade stack">
+              <div className="seg">
                 <button className={side === 'buy' ? 'on buy' : ''} onClick={() => { setSide('buy'); setAmount('') }}>
                   Buy
                 </button>
@@ -297,37 +297,38 @@ export default function Token() {
                   Sell
                 </button>
               </div>
-              <div className="bal dim small mono">Balance: {side === 'buy' ? `${compact(bal.svx)} ${Q}` : `${compact(bal.token)} ${coin.symbol}`}</div>
-              <div className="input-suffix">
-                <input className="input mono big" inputMode="decimal" placeholder="0.0" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} />
-                <i>{side === 'buy' ? Q : coin.symbol}</i>
+              <div className="bal">
+                <span>You pay</span>
+                <span>
+                  Balance {side === 'buy' ? `${compact(bal.quote)} ${q}` : `${compact(bal.token)} ${coin.symbol}`}
+                </span>
+              </div>
+              <div className="affix">
+                <input className="input big" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="Amount" />
+                <i className="post">{side === 'buy' ? q : coin.symbol}</i>
               </div>
               <div className="presets">
-                {PRESETS[side].map((p) => (
-                  <button key={p} onClick={() => preset(p)}>
+                {presets.map((p) => (
+                  <button key={p} onClick={() => (side === 'buy' ? setAmount(p) : setAmount(String(Math.floor(bal.token * (parseInt(p) / 100) * 1e6) / 1e6)))}>
                     {p}
                   </button>
                 ))}
               </div>
-              <div className="quote mono small">
+              <div className="quote">
                 <div>
-                  <span className="dim">You receive</span>
-                  <span>{quoting ? '…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : Q}` : '—'}</span>
+                  <span>You receive</span>
+                  <b>{quoting ? 'Calculating…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : q}` : '—'}</b>
                 </div>
                 <div>
-                  <span className="dim">Minimum</span>
+                  <span>Minimum after slippage</span>
                   <span>{quote ? compact(quote.minOut) : '—'}</span>
                 </div>
                 <div>
-                  <span className="dim">Price impact + fee</span>
+                  <span>Price impact and fee</span>
                   <span className={quote?.priceImpact && quote.priceImpact > 5 ? 'down' : ''}>{quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : '—'}</span>
                 </div>
                 <div>
-                  <span className="dim">Route</span>
-                  <span>{coin.migrated ? 'Meteora DAMM v2' : 'Bonding curve'}</span>
-                </div>
-                <div>
-                  <span className="dim">Slippage</span>
+                  <span>Slippage</span>
                   <span className="slip">
                     {[1, 2, 5, 10].map((s) => (
                       <button key={s} className={slippage === s ? 'on' : ''} onClick={() => setSlippage(s)}>
@@ -337,48 +338,78 @@ export default function Token() {
                   </span>
                 </div>
               </div>
-              {quoteErr && <p className="down small">{quoteErr}</p>}
-              <button className={`btn btn-block ${side === 'buy' ? 'btn-primary' : 'btn-sell'}`} disabled={!!publicKey && (busy || !Number(amount))} onClick={trade}>
+              {quoteErr && <div className="err">{quoteErr}</div>}
+              {isStock && (
+                <label className="check small">
+                  <input type="checkbox" checked={eligible} onChange={(e) => setEligible(e.target.checked)} />
+                  <span>I’m eligible to hold {q} under the xStocks issuer terms.</span>
+                </label>
+              )}
+              <button className={`btn btn-block ${side === 'buy' ? 'btn-primary' : 'btn-sell'}`} disabled={!!publicKey && (busy || !Number(amount) || (isStock && !eligible))} onClick={trade}>
                 {!publicKey ? 'Connect wallet' : status || (side === 'buy' ? `Buy $${coin.symbol}` : `Sell $${coin.symbol}`)}
               </button>
-              {coin.migrated && (
-                <a className="dim small center-link" href={jupiterSwap(QUOTE_MINT.toBase58(), coin.mint)} target="_blank" rel="noreferrer">
-                  Also tradable on Jupiter ↗
-                </a>
-              )}
+              <p className="muted small">
+                Every trade is simulated before you sign. Routed through {coin.migrated ? 'Meteora DAMM v2' : 'the Meteora bonding curve'}.
+                {coin.migrated && (
+                  <>
+                    {' '}
+                    <a className="link" href={jupiterSwap(coin.quoteMint, coin.mint)} target="_blank" rel="noreferrer">
+                      Also on Jupiter
+                    </a>
+                  </>
+                )}
+              </p>
             </div>
           )}
 
           {(isCreator || isPlatform) && (
-            <div className="panel">
-              <b>{isPlatform ? 'Platform fees' : 'Creator fees'}</b>
-              <p className="mono big-num">{compact(isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx)}&nbsp;{Q}</p>
-              <button className="btn btn-ghost btn-block" disabled={busy || (isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx) <= 0} onClick={claim}>
+            <div className="surface pad stack">
+              <h3>{isPlatform ? 'Platform fees' : 'Your creator fees'}</h3>
+              <div className="kv">
+                <span>Unclaimed from the curve</span>
+                <b>
+                  {compact(fees)} {q}
+                </b>
+              </div>
+              <button className="btn btn-ghost btn-block" disabled={busy || fees <= 0} onClick={() => run('Preparing claim…', async () => submit(await buildClaimFees(connection, coin, publicKey!), [], setStatus), 'Fees claimed')}>
                 Claim curve fees
               </button>
               {coin.migrated && (
-                <button className="btn btn-ghost btn-block" disabled={busy} onClick={claimLp}>
-                  Claim locked-LP fees
+                <button className="btn btn-ghost btn-block" disabled={busy} onClick={() => run('Preparing claim…', async () => { let last = ''; for (const tx of await buildClaimLpFees(connection, coin, publicKey!)) last = await submit(tx, [], setStatus); return last }, 'LP fees claimed')}>
+                  Claim locked-liquidity fees
                 </button>
               )}
             </div>
           )}
 
-          <div className="panel small">
-            <div className="kv"><span className="dim">Creator</span><a href={explorerAddr(coin.creator)} target="_blank" rel="noreferrer" className="mono">{short(coin.creator)}</a></div>
-            <div className="kv"><span className="dim">Curve</span><a href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer" className="mono">{short(coin.pool)}</a></div>
-            {coin.migrated && <div className="kv"><span className="dim">DAMM v2 pool</span><a href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer" className="mono">{short(coin.tradingPool)}</a></div>}
-            <div className="kv"><span className="dim">Graduates at</span><span className="mono">{compact(coin.thresholdSvx)}&nbsp;{Q}</span></div>
+          <div className="surface pad stack small">
+            <div className="kv">
+              <span>Creator</span>
+              <a className="link" href={explorerAddr(coin.creator)} target="_blank" rel="noreferrer">{short(coin.creator)}</a>
+            </div>
+            <div className="kv">
+              <span>Pair asset</span>
+              <a className="link" href={explorerAddr(coin.quoteMint)} target="_blank" rel="noreferrer">{q}</a>
+            </div>
+            <div className="kv">
+              <span>Curve</span>
+              <a className="link" href={explorerAddr(coin.pool)} target="_blank" rel="noreferrer">{short(coin.pool)}</a>
+            </div>
+            {coin.migrated && (
+              <div className="kv">
+                <span>DAMM v2 pool</span>
+                <a className="link" href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer">{short(coin.tradingPool)}</a>
+              </div>
+            )}
+            <div className="kv">
+              <span>Graduates at</span>
+              <b>
+                {compact(coin.thresholdSvx)} {q} in the curve
+              </b>
+            </div>
           </div>
         </aside>
       </div>
     </div>
   )
 }
-
-const Kpi = ({ label, value }: { label: string; value: string }) => (
-  <div className="kpi">
-    <span className="dim small">{label}</span>
-    <b className="mono">{value}</b>
-  </div>
-)
