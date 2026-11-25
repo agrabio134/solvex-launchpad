@@ -14,6 +14,28 @@ const isAddr = (v: unknown) => {
   }
 }
 
+async function gecko(mint: string) {
+  try {
+    const r = await fetch(`https://api.geckoterminal.com/api/v2/simple/networks/solana/token_price/${mint}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6_000) })
+    if (!r.ok) return 0
+    const v = Number((await r.json())?.data?.attributes?.token_prices?.[mint])
+    return Number.isFinite(v) && v > 0 ? v : 0
+  } catch {
+    return 0
+  }
+}
+
+async function jupiter(mint: string) {
+  try {
+    const r = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mint}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6_000) })
+    if (!r.ok) return 0
+    const v = Number((await r.json())?.[mint]?.usdPrice)
+    return Number.isFinite(v) && v > 0 ? v : 0
+  } catch {
+    return 0
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' })
   const mint = req.query.mint
@@ -23,16 +45,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hit = cache.get(key)
     let usd = hit && hit.expires > Date.now() ? hit.usd : 0
     if (!usd) {
-      const r = await fetch(`https://api.geckoterminal.com/api/v2/simple/networks/solana/token_price/${key}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) })
-      if (!r.ok) throw new Error(r.status === 429 ? 'Price service busy, retry shortly' : 'Price unavailable')
-      const j = await r.json()
-      usd = Number(j?.data?.attributes?.token_prices?.[key])
-      if (!Number.isFinite(usd) || usd <= 0) throw new Error('No USD price for this token yet')
+      usd = (await gecko(key)) || (await jupiter(key))
+      if (!usd) throw new Error('No USD price for this token right now, retry shortly')
       if (cache.size > 500) cache.clear()
       cache.set(key, { expires: Date.now() + 30_000, usd })
     }
     res.setHeader('Cache-Control', 'public, s-maxage=20')
-    return res.status(200).json({ mint: key, usd, asOf: Date.now(), source: 'GeckoTerminal' })
+    return res.status(200).json({ mint: key, usd, asOf: Date.now(), source: 'GeckoTerminal / Jupiter' })
   } catch (e: any) {
     res.setHeader('Cache-Control', 'no-store')
     return res.status(503).json({ error: e?.message || 'Price unavailable' })
