@@ -9,6 +9,7 @@ import Launch from './pages/Launch'
 import Token from './pages/Token'
 import Profile from './pages/Profile'
 import Docs from './pages/Docs'
+import SimCheck from './pages/SimCheck'
 
 export default function App() {
   const { pathname, hash } = useLocation()
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/coin/:id" element={<Gate><Token /></Gate>} />
           <Route path="/profile" element={<Gate><Profile /></Gate>} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/__sim" element={<SimCheck />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
