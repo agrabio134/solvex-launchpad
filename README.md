@@ -43,7 +43,7 @@ Until `VITE_DBC_CONFIG` is set, the landing page is live and the app pages show 
 
 ## Deploy (Vercel)
 1. Import the repo.
-2. Add `VITE_RPC_URL` and `VITE_DBC_CONFIG` (and optionally `VITE_SVX_MINT`, `VITE_X_URL`, `VITE_TG_URL`).
+2. Add `RPC_URL` (server-side, e.g. Helius) and `VITE_DBC_CONFIG` (and optionally `VITE_SVX_MINT`, `VITE_X_URL`, `VITE_TG_URL`).
 3. Connect a Vercel Blob store (for uploads) and deploy. `vercel.json` already handles SPA routing.
 
-Use a paid RPC such as Helius or Triton. The board calls `getProgramAccounts`, and the public RPC rate-limits it.
+The browser talks to `/api/rpc`, which forwards to `RPC_URL` so the key stays private. Use Helius, Triton or QuickNode: public RPCs block `getProgramAccounts`, which the board needs.

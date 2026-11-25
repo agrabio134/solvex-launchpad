@@ -60,12 +60,16 @@ export function useSend() {
   return useCallback(
     async (tx: Transaction) => {
       const sig = await sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 })
-      const res = await connection.confirmTransaction(
-        { signature: sig, blockhash: tx.recentBlockhash!, lastValidBlockHeight: tx.lastValidBlockHeight! },
-        'confirmed',
-      )
-      if (res.value.err) throw new Error('Transaction failed on-chain')
-      return sig
+      // Poll instead of websocket subscriptions (the RPC is proxied over plain HTTP).
+      for (;;) {
+        const { value } = await connection.getSignatureStatuses([sig])
+        const st = value[0]
+        if (st?.err) throw new Error('Transaction failed on-chain')
+        if (st && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized')) return sig
+        const height = await connection.getBlockHeight('confirmed')
+        if (tx.lastValidBlockHeight && height > tx.lastValidBlockHeight) throw new Error('Transaction expired, please try again')
+        await new Promise((r) => setTimeout(r, 1200))
+      }
     },
     [connection, sendTransaction],
   )

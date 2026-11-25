@@ -10,7 +10,8 @@ const pk = (v?: string) => {
   }
 }
 
-export const RPC_URL: string = env.VITE_RPC_URL || 'https://api.mainnet-beta.solana.com'
+/** Defaults to the same-origin proxy (api/rpc.ts) so the RPC key never reaches the browser. */
+export const RPC_URL: string = env.VITE_RPC_URL || `${window.location.origin}/api/rpc`
 export const CLUSTER: string = env.VITE_CLUSTER || 'mainnet-beta'
 /** The Solvex Meteora DBC config. Its quote mint is $SVX, so SVX is read from it. */
 export const DBC_CONFIG = pk(env.VITE_DBC_CONFIG)
