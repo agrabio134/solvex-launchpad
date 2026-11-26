@@ -41,7 +41,6 @@ import {
   bondingCurvePda,
   canonicalPumpPoolPda,
   canonicalPumpPoolPdaWithQuote,
-  getBuyTokenAmountFromSolAmount,
   getBuyV3TokenAmountFromQuoteAmount,
   getSellSolAmountFromTokenAmount,
   OnlinePumpSdk,
@@ -479,45 +478,30 @@ export interface LaunchParams {
   name: string
   symbol: string
   uri: string
-  /** first buy in the pair asset, made in the launch transaction (optional) */
-  firstBuy?: string
 }
 
-/** One transaction: pump.fun create_v2 (+ the creator's first buy, paid in the pair asset). */
+/**
+ * One transaction: pump.fun create_v2 (Token-2022 coin + bonding curve). The first buy is a separate
+ * transaction: create and buy together need more accounts than one Solana transaction holds.
+ */
 export async function buildLaunch(connection: Connection, creator: PublicKey, p: LaunchParams) {
   validateLaunch(p.name, p.symbol)
   if (p.uri.length > 200) throw new Error('Metadata link is too long.')
-  const sol = isSol(p.quoteMint)
   const supported = await fetchPairMints(connection)
   if (!supported.has(p.quoteMint)) throw new UserError('pump.fun doesn’t accept this pair asset for new coins right now. Choose another pair.')
-  const sdk = pump(connection)
   const mint = Keypair.generate()
-  const base = { mint: mint.publicKey, name: p.name.trim(), symbol: p.symbol, uri: p.uri, creator, user: creator, mayhemMode: false }
-  const quote = sol ? null : await sdk.resolveQuoteMint(new PublicKey(p.quoteMint))
-  const q = quote ? { quoteMint: quote.mint, quoteTokenProgram: quote.quoteTokenProgram } : {}
-  const buy = Number(p.firstBuy || 0)
-
-  let ixs: TransactionInstruction[]
-  if (buy > 0) {
-    const [global, feeConfig] = await globals(connection)
-    const quoteControl = quote ? await sdk.fetchQuoteControl() : null
-    const quoteAmount = toAtomic(p.firstBuy!, quote ? quote.decimals : 9)
-    const quoteTransferFee = quote ? await sdk.fetchQuoteTransferFee(quote.mint) : null
-    const amount = getBuyTokenAmountFromSolAmount({
-      global,
-      feeConfig,
-      mintSupply: null,
-      bondingCurve: null,
-      amount: quoteAmount,
-      quoteMint: quote?.mint,
-      quoteControl,
-      quoteTransferFee,
-    } as any)
-    ixs = await PUMP_SDK.createV2AndBuyV2Instructions({ global, ...base, ...q, amount, quoteAmount, slippage: 5 })
-  } else {
-    ixs = [await PUMP_SDK.createV2Instruction({ ...base, ...q })]
-  }
-  return { tx: new Transaction().add(...ixs), signers: [mint], pool: bondingCurvePda(mint.publicKey).toBase58(), mint: mint.publicKey.toBase58() }
+  const quote = isSol(p.quoteMint) ? null : await pump(connection).resolveQuoteMint(new PublicKey(p.quoteMint))
+  const ix = await PUMP_SDK.createV2Instruction({
+    mint: mint.publicKey,
+    name: p.name.trim(),
+    symbol: p.symbol,
+    uri: p.uri,
+    creator,
+    user: creator,
+    mayhemMode: false,
+    ...(quote ? { quoteMint: quote.mint, quoteTokenProgram: quote.quoteTokenProgram } : {}),
+  })
+  return { tx: new Transaction().add(ix), signers: [mint], pool: bondingCurvePda(mint.publicKey).toBase58(), mint: mint.publicKey.toBase58() }
 }
 
 /* -------------------------------------------------------------- swap */

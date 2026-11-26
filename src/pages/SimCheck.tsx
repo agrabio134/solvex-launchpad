@@ -1,9 +1,9 @@
 /** TEMPORARY (pump-check branch only): simulate pump.fun launches and trades on mainnet. Sends nothing. */
 import { useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
-import { Keypair, PublicKey } from '@solana/web3.js'
-import BN from 'bn.js'
-import { OnlinePumpSdk, PUMP_SDK, getBuyTokenAmountFromSolAmount } from '@pump-fun/pump-sdk'
+import { PublicKey } from '@solana/web3.js'
+import { OnlinePumpSdk, bondingCurvePda } from '@pump-fun/pump-sdk'
+import { tokenBalance } from '../lib/chain'
 import { parsedTx, buildLaunch, compileForWallet, fetchCoinsByMints, fetchPairMints, prepareSwap, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, type Coin } from '../lib/chain'
 
 const WSOL = 'So11111111111111111111111111111111111111112'
@@ -39,25 +39,6 @@ export default function SimCheck() {
         push({ pairs })
         const uri = 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/test.json'
         await sim('LAUNCH SOL pair, no buy', async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: WSOL, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri })), budget: 'launch' }), payer)
-        try {
-          const o = new OnlinePumpSdk(connection)
-          const [global, feeConfig] = await Promise.all([o.fetchGlobal(), o.fetchFeeConfig()])
-          const qa = new BN(50_000_000)
-          const amount = getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: qa, quoteControl: null, quoteTransferFee: null } as any)
-          push({ dbg: 'amount', amount: amount.toString(), isBN: BN.isBN(amount), buyback: global.buybackBasisPoints?.toString(), maxDepth: (global as any).maxCurveDepth })
-          const m = Keypair.generate().publicKey
-          for (const variant of ['v2', 'createOnly']) {
-            try {
-              if (variant === 'v2') await PUMP_SDK.createV2AndBuyV2Instructions({ global, mint: m, name: 'X', symbol: 'XX', uri: 'u', creator: payer, user: payer, amount, quoteAmount: qa, mayhemMode: false })
-              push({ dbg: variant, ok: true })
-            } catch (e: any) {
-              push({ dbg: variant, err: e?.message, stack: String(e?.stack ?? '').split('\n').slice(0, 20) })
-            }
-          }
-        } catch (e: any) {
-          push({ dbg: 'setup', err: e?.message })
-        }
-        await sim('LAUNCH SOL pair + 0.05 SOL first buy', async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: WSOL, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri, firstBuy: '0.05' })), budget: 'launch' }), payer)
         for (const q of pairs.filter((m) => m !== WSOL).slice(0, 3)) await sim(`LAUNCH ${q.slice(0, 6)} pair, no buy`, async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: q, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri })), budget: 'launch' }), payer)
 
         // recent pump.fun coins (curve) and PumpSwap coins (graduated), with a holder for sells
@@ -72,9 +53,13 @@ export default function SimCheck() {
         }
         await collect(PUMP_PROGRAM_ID)
         await sleep(1500)
+        await collect(PUMP_PROGRAM_ID)
+        await sleep(1500)
         await collect(PUMP_AMM_PROGRAM_ID)
         const coins = await fetchCoinsByMints(connection, [...holders.keys()].slice(0, 30))
-        push({ found: coins.map((c) => ({ s: c.symbol, q: c.quoteMint.slice(0, 5), complete: c.complete, migrated: c.migrated, prog: +(c.progress * 100).toFixed(1), price: c.priceSvx, mcap: c.mcapSvx, reserve: c.reserveSvx, thr: c.thresholdSvx, fee: c.creatorFeeSvx })) })
+        const online = new OnlinePumpSdk(connection)
+        for (const c of coins.filter((c) => !c.complete)) { const bc = await online.fetchBondingCurve(c.mint); push({ raw: c.mint, vT: bc.virtualTokenReserves.toString(), vQ: bc.virtualQuoteReserves.toString(), rT: bc.realTokenReserves.toString(), rQ: bc.realQuoteReserves.toString(), sup: bc.tokenTotalSupply.toString(), q: bc.quoteMint.toBase58(), mayhem: bc.isMayhemMode, depth: bc.depth, pcb: bc.postCompleteBaseOut.toString() }); void bondingCurvePda }
+        push({ found: coins.map((c) => ({ m: c.mint, s: c.symbol, q: c.quoteMint.slice(0, 5), complete: c.complete, migrated: c.migrated, prog: +(c.progress * 100).toFixed(1), price: c.priceSvx, mcap: c.mcapSvx, reserve: c.reserveSvx, thr: c.thresholdSvx, fee: c.creatorFeeSvx })) })
         const curveSol = coins.filter((c) => !c.complete && c.quoteMint === WSOL).slice(0, 2)
         const curveTok = coins.filter((c) => !c.complete && c.quoteMint !== WSOL).slice(0, 1)
         const grad = coins.filter((c) => c.migrated).slice(0, 2)
@@ -87,7 +72,9 @@ export default function SimCheck() {
           await trade(c, 'buy', '0.01', payer, 'sol')
           if (c.quoteMint !== WSOL && !c.complete) await trade(c, 'buy', '0.5', payer, 'pair')
           const h = holders.get(c.mint)!
-          await trade(c, 'sell', String(Math.floor(h.amount / 10)), new PublicKey(h.owner), 'sol')
+          const bal = await tokenBalance(connection, new PublicKey(h.owner), new PublicKey(c.mint))
+          if (bal > 1) await trade(c, 'sell', String(Math.floor(bal / 10)), new PublicKey(h.owner), 'sol')
+          else push({ label: `SELL $${c.symbol}`, skipped: 'holder has no tokens now' })
         }
         push({ done: true })
       } catch (e: any) {

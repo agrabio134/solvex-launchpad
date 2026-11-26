@@ -106,13 +106,13 @@ export default function Launch() {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({ address: publicKey.toBase58(), name: name.trim(), symbol, description: description.trim(), image, twitter: twitter.trim(), telegram: telegram.trim(), website: website.trim() })
       setStatus('Preparing launch…')
-      // SOL pairs: the first buy goes in the launch transaction. Other pairs: bought with SOL right after, routed through Jupiter.
-      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri, firstBuy: pairIsSol && buy > 0 ? firstBuy : undefined })
+      // create and first buy don't fit one Solana transaction together, so the first buy follows right after
+      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri })
       const sig = await submit(tx, signers, setStatus, 'launch')
-      toast('ok', `$${symbol} launched${pairIsSol && buy > 0 ? ' with your first buy' : ''}`, sig)
+      toast('ok', `$${symbol} launched`, sig)
       setStatus('Adding it to Flip…')
       if (!(await registerCoin(mint, sig))) toast('err', 'Your coin is live on pump.fun, but Flip couldn’t list it yet. Refresh in a minute.')
-      if (buy > 0 && !pairIsSol) {
+      if (buy > 0) {
         setStatus('Preparing your first buy…')
         try {
           let coin = null
@@ -307,7 +307,7 @@ export default function Launch() {
                 <h2>Review</h2>
                 <label className="field">
                   <span>
-                    First buy <small>optional, in SOL{pairIsSol ? ', bought in the launch transaction' : `, swapped to ${sym} for you right after launch`}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
+                    First buy <small>optional, in SOL, made right after launch{pairIsSol ? '' : ` (swapped to ${sym} for you)`}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
                   </span>
                   <div className="affix">
                     <input className="input" inputMode="decimal" value={firstBuy} onChange={(e) => setFirstBuy(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
