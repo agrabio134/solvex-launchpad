@@ -30,7 +30,7 @@ export function PairTag({ mint }: { mint: string }) {
   const { find, symbol } = useAssets()
   const a = find(mint)
   return (
-    <span className={`pair ${a?.category === 'stock' ? 'stock' : ''}`}>
+    <span className={`pair ${a?.category === 'stock' ? 'is-stock' : ''}`}>
       <AssetIcon mint={mint} size={16} />
       {symbol(mint)}
     </span>
