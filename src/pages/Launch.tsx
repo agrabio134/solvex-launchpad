@@ -68,11 +68,16 @@ export default function Launch() {
       .slice(0, 60)
   }, [assets, pairQ, pairCat, supported])
 
+  // each field is checked once it has something in it, so typing a name doesn't flag the empty ticker
   let coinError = ''
-  try {
-    if (name || symbol) validateLaunch(name, symbol)
-  } catch (e: any) {
-    coinError = e.message
+  if (name && new TextEncoder().encode(name.trim()).length > 32) coinError = 'Name must be at most 32 bytes.'
+  else if (symbol && !/^[A-Z0-9]{2,10}$/.test(symbol)) coinError = 'Ticker: 2–10 uppercase letters or digits.'
+  if (!coinError && name && symbol) {
+    try {
+      validateLaunch(name, symbol)
+    } catch (e: any) {
+      coinError = e.message
+    }
   }
   const coinOk = !!image && !!name.trim() && !!symbol && !coinError
   const pairOk = !!asset && !asset.halted && !!supported?.has(pair)
