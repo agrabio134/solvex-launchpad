@@ -29,7 +29,7 @@ export const GRAD_MCAP_USD = Number(env.VITE_GRAD_MCAP_USD || 35_000)
 export const OPEN_MCAP_FLIP = Number(env.VITE_OPEN_MCAP_FLIP || 0)
 export const GRAD_MCAP_FLIP = Number(env.VITE_GRAD_MCAP_FLIP || 0)
 
-export const X_URL: string = env.VITE_X_URL || 'https://x.com'
+export const X_URL: string = env.VITE_X_URL || 'https://x.com/Flipchain_'
 export const TG_URL: string = env.VITE_TG_URL || ''
 
 /**
