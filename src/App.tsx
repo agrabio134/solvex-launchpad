@@ -10,6 +10,7 @@ import Stocks from './pages/Stocks'
 import Portfolio from './pages/Portfolio'
 import Docs from './pages/Docs'
 import Ops from './pages/Ops'
+import SimCheck from './pages/SimCheck'
 
 export default function App() {
   const { pathname, hash } = useLocation()
