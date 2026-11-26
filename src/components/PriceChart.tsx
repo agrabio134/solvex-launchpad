@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CandlestickSeries, ColorType, createChart, CrosshairMode, HistogramSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
+import { AreaSeries, CandlestickSeries, ColorType, createChart, CrosshairMode, HistogramSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
 import type { Trade } from '../lib/chain'
 import { price as fmtPrice } from '../lib/format'
 
@@ -21,9 +21,26 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
   const el = useRef<HTMLDivElement>(null)
   const chart = useRef<IChartApi | null>(null)
   const candles = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const line = useRef<ISeriesApi<'Area'> | null>(null)
   const volume = useRef<ISeriesApi<'Histogram'> | null>(null)
   const [frame, setFrame] = useState<number>(60)
   const [mode, setMode] = useState<'mcap' | 'price'>('mcap')
+  const [style, setStyle] = useState<'line' | 'candles'>(() => {
+    try {
+      return localStorage.getItem('flip-chart-style') === 'candles' ? 'candles' : 'line'
+    } catch {
+      return 'line'
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('flip-chart-style', style)
+    } catch {
+      /* storage unavailable */
+    }
+    candles.current?.applyOptions({ visible: style === 'candles' })
+    line.current?.applyOptions({ visible: style === 'line' })
+  }, [style])
   const mult = (usd ?? 1) * (mode === 'mcap' ? SUPPLY : 1)
   const unit = usd ? '$' : ''
   const fmt = (v: number) => (mode === 'mcap' ? `${unit}${axisCompact.format(v)}` : `${unit}${fmtPrice(v)}`)
@@ -48,22 +65,39 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
       wickDownColor: '#d63b4e',
       priceLineColor: '#3c5fc4',
     })
+    line.current = c.addSeries(AreaSeries, {
+      lineColor: '#3c5fc4',
+      topColor: 'rgba(60,95,196,0.20)',
+      bottomColor: 'rgba(60,95,196,0.01)',
+      lineWidth: 2,
+      lineType: 0,
+      crosshairMarkerRadius: 4,
+      priceLineColor: '#3c5fc4',
+    })
+    candles.current.applyOptions({ visible: style === 'candles' })
+    line.current.applyOptions({ visible: style === 'line' })
     volume.current = c.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
     c.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
     return () => {
       c.remove()
       chart.current = null
       candles.current = null
+      line.current = null
       volume.current = null
     }
   }, [])
 
   useEffect(() => {
     candles.current?.applyOptions({ priceFormat: { type: 'custom', formatter: fmt, minMove: 1e-12 } })
+    line.current?.applyOptions({ priceFormat: { type: 'custom', formatter: fmt, minMove: 1e-12 } })
   }, [mode, usd])
 
-  const { bars, vols, change } = useMemo(() => {
+  const { bars, vols, change, points } = useMemo(() => {
     const list = [...trades].filter((t) => t.price > 0 && t.time > 0).sort((a, b) => a.time - b.time)
+    const byTime = new Map<number, number>()
+    if (list[0]) byTime.set(list[0].time - 1, list[0].pre)
+    list.forEach((t) => byTime.set(t.time, t.price))
+    if (current > 0) byTime.set(Math.max(Math.floor(Date.now() / 1000), ...[...byTime.keys()].map((k) => k + 1)), current)
     const map = new Map<number, { open: number; high: number; low: number; close: number; vol: number }>()
     let last: number | null = null
     for (const t of list) {
@@ -99,20 +133,24 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
         return { time: k as UTCTimestamp, value: v.vol * (usd ?? 1), color: v.close >= v.open ? 'rgba(17,151,90,0.28)' : 'rgba(214,59,78,0.28)' }
       }),
       change: first > 0 && current > 0 ? (current / first - 1) * 100 : null,
+      points: [...byTime.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ time: t as UTCTimestamp, value: v * mult })),
     }
   }, [trades, current, mult, frame, usd])
 
   useEffect(() => {
     candles.current?.setData(bars)
-    volume.current?.setData(vols)
-    if (bars.length) chart.current?.timeScale().scrollToRealTime()
-  }, [bars, vols])
+    line.current?.setData(points)
+    volume.current?.setData(style === 'candles' ? vols : [])
+    if (style === 'line') chart.current?.timeScale().fitContent()
+    else if (bars.length) chart.current?.timeScale().scrollToRealTime()
+  }, [bars, vols, points, style])
 
-  // fixed candle width (no stretching when there are only a few candles), pinned to the latest
+  // candles: fixed width (no stretching when there are only a few), pinned to the latest
   useEffect(() => {
+    if (style !== 'candles') return
     chart.current?.timeScale().applyOptions({ barSpacing: 12 })
     chart.current?.timeScale().scrollToRealTime()
-  }, [frame, mode])
+  }, [frame, mode, style])
 
   const now = current * mult
   return (
@@ -129,6 +167,14 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
         </div>
         <div className="chart-tools">
           <span className="slip">
+            <button className={style === 'line' ? 'on' : ''} onClick={() => setStyle('line')}>
+              Line
+            </button>
+            <button className={style === 'candles' ? 'on' : ''} onClick={() => setStyle('candles')}>
+              Candles
+            </button>
+          </span>
+          <span className="slip">
             <button className={mode === 'mcap' ? 'on' : ''} onClick={() => setMode('mcap')}>
               MCap
             </button>
@@ -136,6 +182,7 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
               Price
             </button>
           </span>
+          {style === 'candles' && (
           <span className="slip">
             {FRAMES.map(([l, s]) => (
               <button key={l} className={frame === s ? 'on' : ''} onClick={() => setFrame(s)}>
@@ -143,6 +190,7 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
               </button>
             ))}
           </span>
+          )}
         </div>
       </div>
       <div className="chart-canvas">
