@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { PublicKey } from '@solana/web3.js'
-import { buildClaimFees, creatorVault, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/chain'
+import { storedTrades, buildClaimFees, creatorVault, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/chain'
 import { PLATFORM_WALLET, WSOL_MINT, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
 import { errMsg, useAssets, useSubmit, useUsd } from '../lib/hooks'
@@ -32,7 +32,7 @@ export default function Token() {
   const [status, setStatus] = useState('')
   const [bal, setBal] = useState({ quote: 0, token: 0, sol: 0 })
   const [via, setVia] = useState<'sol' | 'pair'>('sol')
-  const [trades, setTrades] = useState<Trade[]>([])
+  const [trades, setTrades] = useState<Trade[]>(() => storedTrades(id))
   const [copied, setCopied] = useState(false)
   const [eligible, setEligible] = useState(false)
   const [vault, setVault] = useState(0)
@@ -69,6 +69,7 @@ export default function Token() {
 
   useEffect(() => {
     misses.current = 0
+    setTrades(storedTrades(id))
     load()
     // quick retries while a brand-new coin reaches the list, then a steady live refresh
     const t = setInterval(load, 5000)
@@ -277,7 +278,7 @@ export default function Token() {
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.map((t) => (
+                    {trades.slice(0, 40).map((t) => (
                       <tr key={t.sig}>
                         <td>{ago(t.time)} ago</td>
                         <td className={`side-tag ${t.side === 'buy' ? 'up' : 'down'}`}>{t.side}</td>

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAssets, useCoins, useUsdMany } from '../lib/hooks'
-import { MarketHead, MarketRow } from '../components/Bits'
+import { MarketCard, MarketHead, MarketRow } from '../components/Bits'
 
 const FILTERS = [
   ['all', 'All'],
@@ -14,13 +14,37 @@ type Filter = (typeof FILTERS)[number][0]
 type Sort = 'new' | 'mcap' | 'progress'
 
 export default function Markets() {
-  const { coins, loading, error, reload } = useCoins(15000)
+  const { coins, loading, error, reload } = useCoins(10000)
   const { find } = useAssets()
   const prices = useUsdMany(coins.map((c) => c.quoteMint))
   const [params, setParams] = useSearchParams()
   const filter = (params.get('f') as Filter) || 'all'
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<Sort>('new')
+  const [view, setView] = useState<'grid' | 'list'>(() => {
+    try {
+      return localStorage.getItem('flip-markets-view') === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('flip-markets-view', view)
+    } catch {
+      /* storage unavailable */
+    }
+  }, [view])
+  const counts = useMemo(
+    () => ({
+      all: coins.length,
+      new: coins.filter((c) => c.status === 'new').length,
+      final: coins.filter((c) => c.status === 'final').length,
+      graduated: coins.filter((c) => c.complete).length,
+      stocks: coins.filter((c) => find(c.quoteMint)?.category === 'stock').length,
+    }),
+    [coins, find],
+  )
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -49,15 +73,16 @@ export default function Markets() {
         </Link>
       </div>
 
-      <div className="toolbar">
+      <div className="mk-bar">
         <div className="seg" role="tablist">
           {FILTERS.map(([v, l]) => (
-            <button key={v} className={filter === v ? 'on' : ''} onClick={() => setParams(v === 'all' ? {} : { f: v })}>
+            <button key={v} role="tab" aria-selected={filter === v} className={filter === v ? 'on' : ''} onClick={() => setParams(v === 'all' ? {} : { f: v })}>
               {l}
+              <i className="count">{counts[v]}</i>
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <div className="mk-tools">
           <label className="search">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
               <circle cx="11" cy="11" r="7" />
@@ -65,18 +90,49 @@ export default function Markets() {
             </svg>
             <input className="input" placeholder="Search name, ticker or address" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search markets" />
           </label>
-          <div className="seg">
-            {(['new', 'mcap', 'progress'] as Sort[]).map((s) => (
-              <button key={s} className={sort === s ? 'on' : ''} onClick={() => setSort(s)}>
-                {s === 'new' ? 'Newest' : s === 'mcap' ? 'Market cap' : 'Progress'}
-              </button>
-            ))}
+          <label className="sort">
+            <span>Sort</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort markets">
+              <option value="new">Newest</option>
+              <option value="mcap">Market cap</option>
+              <option value="progress">Bonding progress</option>
+            </select>
+          </label>
+          <div className="viewtoggle" role="group" aria-label="Layout">
+            <button className={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')} aria-label="Card view" title="Card view">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <rect x="3" y="3" width="8" height="8" rx="2" />
+                <rect x="13" y="3" width="8" height="8" rx="2" />
+                <rect x="3" y="13" width="8" height="8" rx="2" />
+                <rect x="13" y="13" width="8" height="8" rx="2" />
+              </svg>
+            </button>
+            <button className={view === 'list' ? 'on' : ''} onClick={() => setView('list')} aria-label="List view" title="List view">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <rect x="3" y="4" width="18" height="4" rx="1.5" />
+                <rect x="3" y="10" width="18" height="4" rx="1.5" />
+                <rect x="3" y="16" width="18" height="4" rx="1.5" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
 
+      {view === 'grid' && !error && list.length > 0 ? (
+        <div className="mgrid">
+          {list.map((c) => (
+            <MarketCard key={c.pool} coin={c} price={prices[c.quoteMint]} />
+          ))}
+        </div>
+      ) : view === 'grid' && !error && loading && !coins.length ? (
+        <div className="mgrid">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 196, borderRadius: 'var(--r-lg)' }} />
+          ))}
+        </div>
+      ) : (
       <div className="surface market-table">
-        <MarketHead />
+        {view === 'list' && <MarketHead />}
         {error ? (
           <div className="empty">
             <h3>Couldn’t read markets from Solana</h3>
@@ -101,6 +157,7 @@ export default function Markets() {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

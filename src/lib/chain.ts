@@ -507,6 +507,28 @@ function poolTrade(tx: ParsedTransactionWithMeta, sig: string, coin: Coin): Trad
   return { sig, time: tx.blockTime ?? 0, side: dTok > 0 ? 'buy' : 'sell', trader, tokens: Math.abs(dTok), svx: Math.abs(dQ), price: p, pre: p }
 }
 
+/* Trades are kept in the browser per coin, so the chart draws instantly on the next visit. */
+const TRADE_KEY = (mint: string) => `flip-trades:${mint}`
+export function storedTrades(mint: string): Trade[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(TRADE_KEY(mint)) || '[]')
+    return Array.isArray(v) ? v.filter((t) => t && typeof t.sig === 'string' && typeof t.price === 'number' && typeof t.pre === 'number') : []
+  } catch {
+    return []
+  }
+}
+function storeTrades(mint: string, fresh: Trade[]): Trade[] {
+  const all = new Map(storedTrades(mint).map((t) => [`${t.sig}:${t.time}:${t.tokens}`, t]))
+  fresh.forEach((t) => all.set(`${t.sig}:${t.time}:${t.tokens}`, t))
+  const merged = [...all.values()].sort((a, b) => b.time - a.time).slice(0, 1000)
+  try {
+    localStorage.setItem(TRADE_KEY(mint), JSON.stringify(merged))
+  } catch {
+    /* storage full or unavailable: still return the merged list */
+  }
+  return merged
+}
+
 /** Parsed transactions never change, so each is read once per session. */
 const txCache = new Map<string, Promise<Trade[]>>()
 
@@ -539,7 +561,7 @@ export async function fetchTrades(connection: Connection, coin: Coin, limit = 60
     )
     res.forEach((r) => out.push(...r))
   }
-  return out.sort((a, b) => b.time - a.time)
+  return storeTrades(coin.mint, out)
 }
 
 /* ------------------------------------------------------------ launch */

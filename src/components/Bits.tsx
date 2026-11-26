@@ -46,10 +46,10 @@ export function Progress({ value, done }: { value: number; done?: boolean }) {
 }
 
 export function StatusBadge({ coin }: { coin: Coin }) {
-  if (coin.migrated) return <span className="badge grad">On Solana</span>
-  if (coin.complete) return <span className="badge grad">Ready to migrate</span>
+  if (coin.migrated) return <span className="badge grad">On PumpSwap</span>
+  if (coin.complete) return <span className="badge grad">Graduating</span>
   if (coin.status === 'final') return <span className="badge final">Final stretch</span>
-  return <span className="badge">New</span>
+  return <span className="badge">New pair</span>
 }
 
 export function usd(n: number) {
@@ -81,9 +81,47 @@ export function MarketRow({ coin, price }: { coin: Coin; price: number | undefin
       </div>
       <div className="prog">
         <Progress value={coin.progress} done={coin.complete} />
-        <span>{coin.migrated ? 'Graduated to Solana' : coin.complete ? 'Curve complete' : `${pct(coin.progress)} to graduation`}</span>
+        <span>{coin.migrated ? 'Graduated to PumpSwap' : coin.complete ? 'Curve complete' : `${pct(coin.progress)} to graduation`}</span>
       </div>
       <div className="age">{ago(coin.createdAt)}</div>
+    </Link>
+  )
+}
+
+/** Grid card for the markets page: image, name, market cap and curve progress at a glance. */
+export function MarketCard({ coin, price }: { coin: Coin; price: number | undefined }) {
+  const { symbol } = useAssets()
+  const q = symbol(coin.quoteMint)
+  return (
+    <Link to={`/coin/${coin.mint}`} className={`mcard ${coin.complete ? 'is-grad' : coin.status === 'final' ? 'is-final' : ''}`}>
+      <div className="mcard-top">
+        <CoinImg coin={coin} size={72} />
+        <div className="mcard-id">
+          <div className="mcard-name">
+            <b>{coin.name}</b>
+            <span className="mcard-age">{ago(coin.createdAt)}</span>
+          </div>
+          <div className="mcard-sym">
+            <span>${coin.symbol}</span>
+            <PairTag mint={coin.quoteMint} />
+          </div>
+          <p className="mcard-desc">{coin.description || 'No description yet.'}</p>
+        </div>
+      </div>
+      <div className="mcard-stats">
+        <div>
+          <span>Market cap</span>
+          <b>{price ? usd(coin.mcapSvx * price) : `${compact(coin.mcapSvx)} ${q}`}</b>
+        </div>
+        <div>
+          <span>{coin.complete ? 'Status' : 'In curve'}</span>
+          <b>{coin.complete ? (coin.migrated ? 'On PumpSwap' : 'Graduating') : `${compact(coin.reserveSvx)} ${q}`}</b>
+        </div>
+      </div>
+      <div className="mcard-prog">
+        <Progress value={coin.progress} done={coin.complete} />
+        <span>{coin.complete ? '100%' : pct(coin.progress)}</span>
+      </div>
     </Link>
   )
 }
