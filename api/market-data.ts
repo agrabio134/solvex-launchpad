@@ -1,5 +1,5 @@
 /**
- * USD price of a Solana token (used for $FLIP), from GeckoTerminal with a short cache.
+ * USD price of a Solana token (pair assets), from GeckoTerminal with a short cache.
  * GET /api/market-data?mint=<address>
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'

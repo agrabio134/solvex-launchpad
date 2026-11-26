@@ -1,8 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import type { AddressLookupTableAccount, Keypair, Transaction } from '@solana/web3.js'
-import { CORE_ASSETS, fetchAssets, fetchCoins, quoteUsd, submit, type Asset, type Coin, type SignTx } from './dbc'
-import { FLIP_MINT } from './config'
+import { CORE_ASSETS, fetchAssets, fetchCoins, quoteUsd, submit, type Asset, type Coin, type SignTx, type Budget } from './chain'
 import { friendly } from './errors'
 
 /* ------------------------------------------------------------ assets */
@@ -18,16 +17,14 @@ interface AssetsState {
 const AssetsCtx = createContext<AssetsState>({ assets: CORE_ASSETS, usd: {}, find: () => undefined, symbol: (m) => m.slice(0, 4), setUsd: () => {} })
 export const useAssets = () => useContext(AssetsCtx)
 
-/** Pair catalogue (SOL, USDC, $FLIP, xStocks) and USD prices for any quote asset that is shown. */
+/** Pair catalogue (SOL, USDC, xStocks) and USD prices for any quote asset that is shown. */
 export function AssetsProvider({ children }: { children: ReactNode }) {
   const [assets, setAssets] = useState<Asset[]>(CORE_ASSETS)
   const [error, setError] = useState<string>()
   const [usd, setUsd] = useState<Record<string, number>>({})
   useEffect(() => {
     fetchAssets().then((r) => {
-      const flip = FLIP_MINT?.toBase58()
-      const list = flip && !r.assets.some((a) => a.mint === flip) ? [{ mint: flip, symbol: 'FLIP', name: 'Flip', category: 'crypto' as const }, ...r.assets] : r.assets
-      setAssets(list)
+      setAssets(r.assets)
       setError(r.error)
     })
   }, [])
@@ -116,7 +113,7 @@ export function useSubmit() {
   const { connection } = useConnection()
   const { publicKey, signTransaction } = useWallet()
   return useCallback(
-    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'route' | 'launch' | 'migrate', luts: AddressLookupTableAccount[] = []) => {
+    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: Budget, luts: AddressLookupTableAccount[] = []) => {
       if (!publicKey || !signTransaction) throw new Error('Connect a wallet that can sign transactions')
       return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget, luts)
     },

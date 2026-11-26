@@ -1,14 +1,16 @@
 /**
- * /#ops: platform fee console. Only the platform wallet can enter, after signing a sign-in message
- * (proves the connected wallet really holds the key). Claims still need that wallet's signature on-chain.
+ * /#ops: admin console. Only the admin wallet can enter, after signing a sign-in message
+ * (proves the connected wallet really holds the key). Hiding or restoring a market needs a fresh
+ * signed message that the server checks against the admin wallet.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { ed25519 } from '@noble/curves/ed25519'
-import { buildClaimFees, buildClaimLpFees, fetchCoins, submitMany, type Coin, type SignAll } from '../lib/dbc'
-import { LISTED_AFTER, PLATFORM_WALLET, explorerAddr, explorerTx } from '../lib/config'
+import bs58 from 'bs58'
+import { fetchCoins, type Coin } from '../lib/chain'
+import { PLATFORM_WALLET, explorerAddr } from '../lib/config'
 import { compact, short } from '../lib/format'
 import { errMsg, useAssets } from '../lib/hooks'
 import { useToast } from '../components/Toast'
@@ -26,10 +28,8 @@ function readSession(wallet: string) {
   }
 }
 
-type Result = { label: string; ok: boolean; detail: string; sig?: string }
-
 export default function Ops() {
-  const { publicKey, signMessage, signAllTransactions, disconnect } = useWallet()
+  const { publicKey, signMessage, disconnect } = useWallet()
   const { setVisible } = useWalletModal()
   const toast = useToast()
   const wallet = publicKey?.toBase58()
@@ -56,7 +56,7 @@ export default function Ops() {
 
   if (!publicKey)
     return (
-      <Gatekeeper title="Flip ops" body="Connect the platform wallet to manage platform fees.">
+      <Gatekeeper title="Flip ops" body="Connect the admin wallet to manage the markets listed on Flip.">
         <button className="btn btn-primary" onClick={() => setVisible(true)}>
           Connect wallet
         </button>
@@ -64,7 +64,7 @@ export default function Ops() {
     )
   if (!isAdmin)
     return (
-      <Gatekeeper title="This page is for the Flip platform wallet" body={`The connected wallet ${short(publicKey.toBase58(), 5)} isn’t the platform wallet ${short(PLATFORM_WALLET.toBase58(), 5)}. Switch wallets to continue.`}>
+      <Gatekeeper title="This page is for the Flip admin wallet" body={`The connected wallet ${short(publicKey.toBase58(), 5)} isn’t the admin wallet ${short(PLATFORM_WALLET.toBase58(), 5)}. Switch wallets to continue.`}>
         <button className="btn btn-ghost" onClick={() => disconnect()}>
           Disconnect
         </button>
@@ -72,13 +72,13 @@ export default function Ops() {
     )
   if (!authed)
     return (
-      <Gatekeeper title="Sign in to Flip ops" body="Sign a short message to prove you hold the platform wallet. It’s free and sends no transaction. The session lasts 12 hours in this tab.">
+      <Gatekeeper title="Sign in to Flip ops" body="Sign a short message to prove you hold the admin wallet. It’s free and sends no transaction. The session lasts 12 hours in this tab.">
         <button className="btn btn-primary" onClick={signIn}>
           Sign in with wallet
         </button>
       </Gatekeeper>
     )
-  return <Console signAll={signAllTransactions as SignAll | undefined} />
+  return <Console sign={signMessage} />
 }
 
 function Gatekeeper({ title, body, children }: { title: string; body: string; children: React.ReactNode }) {
@@ -93,21 +93,16 @@ function Gatekeeper({ title, body, children }: { title: string; body: string; ch
   )
 }
 
-function Console({ signAll }: { signAll?: SignAll }) {
+function Console({ sign }: { sign?: (m: Uint8Array) => Promise<Uint8Array> }) {
   const { connection } = useConnection()
   const { symbol } = useAssets()
   const toast = useToast()
   const [coins, setCoins] = useState<Coin[] | null>(null)
-  const [sol, setSol] = useState<number | null>(null)
-  const [status, setStatus] = useState('')
-  const [results, setResults] = useState<Result[]>([])
-  const [showOld, setShowOld] = useState(true)
+  const [busy, setBusy] = useState('')
 
   const load = useCallback(async () => {
     try {
-      const [list, lamports] = await Promise.all([fetchCoins(connection, { includeUnlisted: true }), connection.getBalance(PLATFORM_WALLET)])
-      setCoins(list)
-      setSol(lamports / 1e9)
+      setCoins(await fetchCoins(connection, { includeUnlisted: true }))
     } catch (e) {
       toast('err', errMsg(e))
       setCoins((c) => c ?? [])
@@ -117,143 +112,60 @@ function Console({ signAll }: { signAll?: SignAll }) {
     load()
   }, [load])
 
-  const visible = useMemo(() => (coins ?? []).filter((c) => showOld || (c.createdAt ?? 0) >= LISTED_AFTER), [coins, showOld])
-  const owed = visible.filter((c) => c.partnerFeeSvx > 0)
-  const totals = useMemo(() => {
-    const m = new Map<string, number>()
-    owed.forEach((c) => m.set(c.quoteMint, (m.get(c.quoteMint) ?? 0) + c.partnerFeeSvx))
-    return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [owed])
-  const graduated = visible.filter((c) => c.migrated)
-
-  const run = async (items: { label: string; build: () => Promise<any> }[]) => {
-    if (!signAll) return toast('err', 'This wallet can’t sign several transactions at once. Use Phantom, Solflare or Backpack.')
-    if (!items.length) return toast('info', 'Nothing to claim right now.')
+  const toggle = async (c: Coin) => {
+    if (!sign) return toast('err', 'This wallet can’t sign messages. Use Phantom, Solflare or Backpack.')
+    const op = c.hidden ? 'show' : 'hide'
     try {
-      setResults([])
-      setStatus('Preparing claims…')
-      const built: { label: string; tx: any }[] = []
-      const failed: Result[] = []
-      for (const it of items) {
-        try {
-          const tx = await it.build()
-          ;(Array.isArray(tx) ? tx : [tx]).forEach((t: any, i: number) => built.push({ label: Array.isArray(tx) && tx.length > 1 ? `${it.label} #${i + 1}` : it.label, tx: t }))
-        } catch (e) {
-          failed.push({ label: it.label, ok: false, detail: errMsg(e) })
-        }
-      }
-      const res = built.length ? await submitMany(connection, PLATFORM_WALLET, signAll, built, setStatus) : []
-      const all = [...res, ...failed]
-      setResults(all)
-      const ok = all.filter((r) => r.ok).length
-      toast(ok === all.length ? 'ok' : ok ? 'info' : 'err', `${ok} of ${all.length} claims went through.`)
+      setBusy(c.mint)
+      const message = `Flip ops: ${op} ${c.mint}\nIssued: ${Date.now()}`
+      const signature = bs58.encode(await sign(new TextEncoder().encode(message)))
+      const r = await fetch('/api/coins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, mint: c.mint, message, signature }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || 'Request failed')
+      toast('ok', op === 'hide' ? `$${c.symbol} is hidden from Flip` : `$${c.symbol} is listed again`)
+      await new Promise((res) => setTimeout(res, 1200))
       await load()
     } catch (e) {
       toast('err', errMsg(e))
     } finally {
-      setStatus('')
+      setBusy('')
     }
   }
 
-  const claimCurve = (list: Coin[]) => run(list.map((c) => ({ label: `$${c.symbol} curve fees`, build: () => buildClaimFees(connection, c, PLATFORM_WALLET) })))
-  const claimLp = (list: Coin[]) => run(list.map((c) => ({ label: `$${c.symbol} locked-LP fees`, build: () => buildClaimLpFees(connection, c, PLATFORM_WALLET) })))
-  const busy = !!status
+  const list = coins ?? []
+  const hidden = list.filter((c) => c.hidden).length
+  const graduated = list.filter((c) => c.complete).length
 
   return (
     <div className="wrap page">
       <div className="page-head">
         <div>
           <h1>Flip ops</h1>
-          <p>Platform fees across every market on {short(PLATFORM_WALLET.toBase58(), 5)}.</p>
+          <p>Every coin launched on Flip. Hide one to take it off the public site; it keeps trading on pump.fun.</p>
         </div>
-        <button className="btn btn-ghost" onClick={load} disabled={busy}>
+        <button className="btn btn-ghost" onClick={load} disabled={!!busy}>
           Refresh
         </button>
       </div>
 
-      {sol !== null && sol < 0.02 && (
-        <div className="note" style={{ marginBottom: 18 }}>
-          The platform wallet has {sol.toFixed(4)} SOL. Each claim costs a small network fee, and receiving a token for the first time costs about 0.002 SOL in account rent.
-          Add at least 0.02 SOL before claiming.
-        </div>
-      )}
-
       <div className="surface stats" style={{ marginBottom: 18 }}>
         <div>
-          <span>Platform wallet SOL</span>
-          <b>{sol === null ? '…' : sol.toFixed(4)}</b>
+          <span>Launched on Flip</span>
+          <b>{coins ? list.length : '…'}</b>
         </div>
         <div>
-          <span>Markets</span>
-          <b>{coins ? visible.length : '…'}</b>
+          <span>Listed</span>
+          <b>{coins ? list.length - hidden : '…'}</b>
         </div>
         <div>
-          <span>With fees to claim</span>
-          <b>{coins ? owed.length : '…'}</b>
+          <span>Hidden</span>
+          <b>{coins ? hidden : '…'}</b>
         </div>
         <div>
           <span>Graduated</span>
-          <b>{coins ? graduated.length : '…'}</b>
+          <b>{coins ? graduated : '…'}</b>
         </div>
       </div>
-
-      <div className="surface pad stack" style={{ marginBottom: 18 }}>
-        <div className="kv" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-          <h3>Unclaimed curve fees</h3>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button className="btn btn-primary btn-sm" disabled={busy || !owed.length} onClick={() => claimCurve(owed)}>
-              {status || `Claim all (${owed.length})`}
-            </button>
-            {graduated.length > 0 && (
-              <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => claimLp(graduated)}>
-                Claim locked-LP fees ({graduated.length})
-              </button>
-            )}
-          </div>
-        </div>
-        {totals.length ? (
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            {totals.map(([mint, amt]) => (
-              <span key={mint} className="pill">
-                <PairTag mint={mint} /> {compact(amt)} {symbol(mint)}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">{coins ? 'No curve fees waiting. They build up as people trade.' : 'Reading markets from Solana…'}</p>
-        )}
-        <label className="check small">
-          <input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} />
-          <span>Include markets from the old FirePad launchpad (hidden from the public site)</span>
-        </label>
-      </div>
-
-      {results.length > 0 && (
-        <div className="surface" style={{ marginBottom: 18 }}>
-          <div className="chart-head" style={{ paddingBottom: 12 }}>
-            <b>Last run</b>
-          </div>
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <tbody>
-                {results.map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.label}</td>
-                    <td className={r.ok ? 'up' : 'down'}>{r.detail}</td>
-                    <td className="right">
-                      {r.sig && (
-                        <a className="link" href={explorerTx(r.sig)} target="_blank" rel="noreferrer">
-                          View
-                        </a>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       <div className="surface">
         <div className="tbl-wrap">
@@ -263,7 +175,7 @@ function Console({ signAll }: { signAll?: SignAll }) {
                 <th>Market</th>
                 <th>Pair</th>
                 <th>Status</th>
-                <th>Unclaimed (platform)</th>
+                <th>Creator</th>
                 <th className="right">Actions</th>
               </tr>
             </thead>
@@ -274,36 +186,35 @@ function Console({ signAll }: { signAll?: SignAll }) {
                     Reading markets from Solana…
                   </td>
                 </tr>
-              ) : visible.length ? (
-                visible.map((c) => (
-                  <tr key={c.pool}>
+              ) : list.length ? (
+                list.map((c) => (
+                  <tr key={c.mint} style={c.hidden ? { opacity: 0.6 } : undefined}>
                     <td>
                       <Link to={`/coin/${c.mint}`} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                         <CoinImg coin={c} size={30} />
                         <span>
                           <b>${c.symbol}</b>
-                          {(c.createdAt ?? 0) < LISTED_AFTER && <span className="muted small"> (FirePad)</span>}
+                          {c.hidden && <span className="muted small"> (hidden)</span>}
                         </span>
                       </Link>
                     </td>
                     <td>
                       <PairTag mint={c.quoteMint} />
                     </td>
-                    <td>{c.migrated ? 'On Solana' : c.complete ? 'Ready to migrate' : `${Math.round(c.progress * 100)}% of curve`}</td>
                     <td>
-                      {compact(c.partnerFeeSvx)} {symbol(c.quoteMint)}
+                      {c.migrated ? 'On PumpSwap' : c.complete ? 'Graduating' : `${Math.round(c.progress * 100)}% of curve`} · {compact(c.reserveSvx)} {symbol(c.quoteMint)}
+                    </td>
+                    <td>
+                      <a className="link" href={explorerAddr(c.creator)} target="_blank" rel="noreferrer">
+                        {short(c.creator)}
+                      </a>
                     </td>
                     <td className="right" style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-ghost btn-sm" disabled={busy || c.partnerFeeSvx <= 0} onClick={() => claimCurve([c])}>
-                        Claim
+                      <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => toggle(c)}>
+                        {busy === c.mint ? 'Signing…' : c.hidden ? 'Show' : 'Hide'}
                       </button>{' '}
-                      {c.migrated && (
-                        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => claimLp([c])}>
-                          LP fees
-                        </button>
-                      )}{' '}
-                      <a className="link small" href={explorerAddr(c.pool)} target="_blank" rel="noreferrer">
-                        Solscan
+                      <a className="link small" href={`https://pump.fun/coin/${c.mint}`} target="_blank" rel="noreferrer">
+                        pump.fun
                       </a>
                     </td>
                   </tr>
@@ -311,7 +222,7 @@ function Console({ signAll }: { signAll?: SignAll }) {
               ) : (
                 <tr>
                   <td colSpan={5} className="muted">
-                    No markets yet.
+                    No coins launched on Flip yet.
                   </td>
                 </tr>
               )}

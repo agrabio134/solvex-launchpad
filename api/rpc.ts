@@ -1,12 +1,12 @@
 /**
  * Solana mainnet JSON-RPC relay. The browser calls /api/rpc; the real endpoint
  * (RPC_URL, e.g. Helius with its key) stays server-side. Never holds or uses a private key.
- * Only the methods the app needs; program scans limited to filtered DBC / DAMM v2 queries.
+ * Only the methods the app needs; program scans limited to filtered pump.fun / PumpSwap queries.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
-const PROGRAMS = new Set(['dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN', 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'])
+const PROGRAMS = new Set(['6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'])
 const METHODS = new Set([
   'getGenesisHash', 'getAccountInfo', 'getMultipleAccounts', 'getProgramAccounts', 'getLatestBlockhash', 'getBlockHeight',
   'getBalance', 'getSlot', 'getBlockTime', 'getEpochInfo', 'getMinimumBalanceForRentExemption', 'getFeeForMessage',

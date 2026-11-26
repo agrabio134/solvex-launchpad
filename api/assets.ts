@@ -1,5 +1,5 @@
 /**
- * Quote assets a launch can pair with: SOL, USDC (and $FLIP when configured) plus every
+ * Quote assets a launch can pair with: SOL, USDC plus every
  * tokenized stock / ETF the xStocks issuer has deployed on Solana. Cached for 5 minutes.
  * GET /api/assets
  */
@@ -19,8 +19,6 @@ let lastGood: Asset[] | null = null
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' })
   const core = [...CORE]
-  const flip = process.env.VITE_FLIP_MINT
-  if (flip) core.unshift({ mint: flip, symbol: 'FLIP', name: 'Flip', category: 'crypto' })
   try {
     if (!cache || Date.now() - cache.time > 300_000) {
       const stocks: Asset[] = []

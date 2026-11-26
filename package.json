@@ -9,9 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@meteora-ag/cp-amm-sdk": "1.5.1",
-    "@meteora-ag/dynamic-bonding-curve-sdk": "2.0.0",
     "@noble/curves": "1.9.7",
+    "@pump-fun/pump-sdk": "4.3.1",
     "@solana/spl-token": "0.4.15",
     "@solana/wallet-adapter-base": "0.9.28",
     "@solana/wallet-adapter-react": "0.15.40",

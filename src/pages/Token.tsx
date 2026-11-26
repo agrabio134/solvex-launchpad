@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { PublicKey } from '@solana/web3.js'
-import { buildClaimFees, buildClaimLpFees, buildMigrate, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/dbc'
+import { buildClaimFees, creatorVault, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/chain'
 import { PLATFORM_WALLET, WSOL_MINT, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
 import { errMsg, useAssets, useSubmit, useUsd } from '../lib/hooks'
@@ -35,6 +35,7 @@ export default function Token() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [copied, setCopied] = useState(false)
   const [eligible, setEligible] = useState(false)
+  const [vault, setVault] = useState(0)
   const usd = useUsd(coin?.quoteMint)
 
   const load = useCallback(async () => {
@@ -56,7 +57,8 @@ export default function Token() {
       quoteBalance(connection, publicKey, WSOL_MINT.toBase58()),
     ])
     setBal({ quote: q, token: t, sol: s })
-  }, [connection, publicKey, coin?.mint, coin?.quoteMint])
+    if (publicKey.toBase58() === coin.creator) creatorVault(connection, publicKey, coin.quoteMint).then(setVault).catch(() => {})
+  }, [connection, publicKey, coin?.mint, coin?.quoteMint, coin?.creator])
 
   useEffect(() => {
     load()
@@ -70,7 +72,7 @@ export default function Token() {
   useEffect(() => {
     setQuote(null)
     setQuoteErr('')
-    if (!coin || !Number(amount) || (coin.complete && !coin.migrated)) return
+    if (!coin || !Number(amount)) return
     setQuoting(true)
     const t = setTimeout(() => {
       prepareSwap(connection, coin, side, amount, slippage * 100, publicKey ?? PLATFORM_WALLET, via)
@@ -104,15 +106,13 @@ export default function Token() {
   const q = symOf(coin.quoteMint)
   const isStock = find(coin.quoteMint)?.category === 'stock'
   const isCreator = publicKey?.toBase58() === coin.creator
-  const isPlatform = !!publicKey && publicKey.equals(PLATFORM_WALLET)
-  const needsMigration = coin.complete && !coin.migrated
   const busy = !!status
   const pairIsSol = coin.quoteMint === WSOL_MINT.toBase58()
   const routed = via === 'sol' && !pairIsSol
   const unit = routed ? 'SOL' : q // what the user pays (buy) or receives (sell)
   const payBal = routed ? bal.sol : bal.quote
   const presets = side === 'sell' ? ['25%', '50%', '75%', '100%'] : unit === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['10', '50', '100', '500']
-  const fees = isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx
+  const fees = coin.creatorFeeSvx + vault
 
   const run = async (label: string, fn: () => Promise<string | void>, done: string) => {
     if (!publicKey) return setVisible(true)
@@ -144,7 +144,7 @@ export default function Token() {
           )
         if (side === 'sell' && n > bal.token) throw new UserError(`You’re selling ${amount} $${coin.symbol}, but your wallet holds ${compact(bal.token)}.`)
         const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!, via)
-        return submit(p.tx, [], setStatus, routed ? 'route' : 'swap', p.luts)
+        return submit(p.tx, [], setStatus, p.budget, p.luts)
       },
       side === 'buy' ? `Bought $${coin.symbol}` : `Sold $${coin.symbol}`,
     )
@@ -223,16 +223,16 @@ export default function Token() {
 
           <div className="surface pad stack curve">
             <div className="kv">
-              <h3>{coin.migrated ? 'Graduated to Solana' : coin.complete ? 'Curve complete' : 'Bonding curve'}</h3>
+              <h3>{coin.migrated ? 'Graduated to PumpSwap' : coin.complete ? 'Curve complete' : 'pump.fun bonding curve'}</h3>
               <b>{coin.complete ? '100%' : pct(coin.progress)}</b>
             </div>
             <Progress value={coin.progress} done={coin.complete} />
             <p className="muted">
               {coin.migrated
-                ? 'Liquidity now sits in a locked Meteora DAMM v2 pool. Trades on this page route through it.'
+                ? 'The curve completed and pump.fun moved its liquidity to a PumpSwap pool. Trades on this page route through it.'
                 : coin.complete
-                  ? 'The curve is full. Anyone can migrate it to Solana, and trading resumes there straight after.'
-                  : `${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} ${q} more and $${coin.symbol} graduates to Solana.`}
+                  ? 'The curve is complete. pump.fun is moving the liquidity to PumpSwap, and trading resumes here in a minute.'
+                  : `About ${compact(Math.max(0, coin.thresholdSvx - coin.reserveSvx))} ${q} more and $${coin.symbol} graduates to PumpSwap.`}
             </p>
           </div>
 
@@ -294,15 +294,7 @@ export default function Token() {
         </div>
 
         <aside className="coin-side">
-          {needsMigration ? (
-            <div className="surface pad stack">
-              <h3>Ready to graduate</h3>
-              <p className="muted">Migrating moves the curve’s liquidity into a locked Meteora DAMM v2 pool so trading continues on Solana. Anyone can do it and only pays network fees.</p>
-              <button className="btn btn-primary btn-block" disabled={!!publicKey && busy} onClick={() => run('Preparing migration…', async () => { const m = await buildMigrate(connection, coin, publicKey!); return submit(m.tx, m.signers, setStatus, 'migrate') }, 'Migrated to Solana')}>
-                {!publicKey ? 'Connect wallet' : status || 'Migrate to Solana'}
-              </button>
-            </div>
-          ) : (
+          {(
             <div className="surface trade stack">
               <div className="seg">
                 <button className={side === 'buy' ? 'on buy' : ''} onClick={() => { setSide('buy'); setAmount('') }}>
@@ -380,10 +372,14 @@ export default function Token() {
                 Every trade is simulated before you sign.{' '}
                 {routed
                   ? `Your SOL is swapped to ${q} through Jupiter and then into $${coin.symbol}, in one transaction. Any small ${q} left over stays in your wallet.`
-                  : `Routed through ${coin.migrated ? 'Meteora DAMM v2' : 'the Meteora bonding curve'}.`}
+                  : `Routed through ${coin.complete ? 'PumpSwap via Jupiter' : 'the pump.fun bonding curve'}.`}
+                {' '}
+                <a className="link" href={`https://pump.fun/coin/${coin.mint}`} target="_blank" rel="noreferrer">
+                  View on pump.fun
+                </a>
                 {coin.migrated && (
                   <>
-                    {' '}
+                    {' · '}
                     <a className="link" href={jupiterSwap(coin.quoteMint, coin.mint)} target="_blank" rel="noreferrer">
                       Also on Jupiter
                     </a>
@@ -393,23 +389,25 @@ export default function Token() {
             </div>
           )}
 
-          {(isCreator || isPlatform) && (
+          {isCreator && (
             <div className="surface pad stack">
-              <h3>{isPlatform ? 'Platform fees' : 'Your creator fees'}</h3>
+              <h3>Your creator fees</h3>
               <div className="kv">
-                <span>Unclaimed from the curve</span>
+                <span>Waiting on this coin’s curve</span>
                 <b>
-                  {compact(fees)} {q}
+                  {compact(coin.creatorFeeSvx)} {q}
                 </b>
               </div>
-              <button className="btn btn-ghost btn-block" disabled={busy || fees <= 0} onClick={() => run('Preparing claim…', async () => submit(await buildClaimFees(connection, coin, publicKey!), [], setStatus), 'Fees claimed')}>
-                Claim curve fees
+              <div className="kv">
+                <span>In your pump.fun creator vault</span>
+                <b>
+                  {compact(vault)} {q}
+                </b>
+              </div>
+              <button className="btn btn-ghost btn-block" disabled={busy || fees <= 0} onClick={() => run('Preparing claim…', async () => submit(await buildClaimFees(connection, coin, publicKey!), [], setStatus, 'claim'), 'Creator fees claimed')}>
+                Claim creator fees
               </button>
-              {coin.migrated && (
-                <button className="btn btn-ghost btn-block" disabled={busy} onClick={() => run('Preparing claim…', async () => { let last = ''; for (const tx of await buildClaimLpFees(connection, coin, publicKey!)) last = await submit(tx, [], setStatus); return last }, 'LP fees claimed')}>
-                  Claim locked-liquidity fees
-                </button>
-              )}
+              <p className="muted small">Your vault collects creator fees from all your coins in {q}, so one claim pays out all of them.</p>
             </div>
           )}
 
@@ -428,14 +426,14 @@ export default function Token() {
             </div>
             {coin.migrated && (
               <div className="kv">
-                <span>DAMM v2 pool</span>
+                <span>PumpSwap pool</span>
                 <a className="link" href={explorerAddr(coin.tradingPool)} target="_blank" rel="noreferrer">{short(coin.tradingPool)}</a>
               </div>
             )}
             <div className="kv">
               <span>Graduates at</span>
               <b>
-                {compact(coin.thresholdSvx)} {q} in the curve
+                about {compact(coin.thresholdSvx)} {q} in the curve
               </b>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import type { Asset, Coin } from '../lib/dbc'
+import type { Asset, Coin } from '../lib/chain'
 import { useAssets } from '../lib/hooks'
 import { ago, compact, pct } from '../lib/format'
 

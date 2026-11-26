@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useConnection } from '@solana/wallet-adapter-react'
+import { fetchPairMints } from '../lib/chain'
 import { Link } from 'react-router-dom'
 import { useAssets } from '../lib/hooks'
 import { AssetIcon } from '../components/Bits'
@@ -10,10 +12,16 @@ export default function Stocks() {
   const { assets, error } = useAssets()
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)
+  const { connection } = useConnection()
+  const [supported, setSupported] = useState<Set<string> | null>(null)
+  useEffect(() => {
+    fetchPairMints(connection).then(setSupported).catch(() => setSupported(new Set()))
+  }, [connection])
+  // only stocks pump.fun accepts as a pair for new coins
   const stocks = useMemo(() => {
     const s = q.trim().toLowerCase()
-    return assets.filter((a) => a.category === 'stock' && (!s || `${a.symbol} ${a.name}`.toLowerCase().includes(s)))
-  }, [assets, q])
+    return assets.filter((a) => a.category === 'stock' && supported?.has(a.mint) && (!s || `${a.symbol} ${a.name}`.toLowerCase().includes(s)))
+  }, [assets, q, supported])
   const pages = Math.max(1, Math.ceil(stocks.length / PAGE))
 
   return (
@@ -21,7 +29,7 @@ export default function Stocks() {
       <div className="page-head">
         <div>
           <h1>Stock pairs</h1>
-          <p>Launch a coin that trades against a tokenized stock or ETF on Solana, like NVDAx or SPYx.</p>
+          <p>Launch a pump.fun coin priced in a tokenized stock or ETF. Only the stocks pump.fun accepts as pairs are listed.</p>
         </div>
         <label className="search">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
@@ -80,7 +88,7 @@ export default function Stocks() {
         </>
       ) : (
         <div className="surface empty">
-          <h3>{q ? 'No stock matches that search' : 'Loading the stock catalogue'}</h3>
+          <h3>{q ? 'No stock matches that search' : supported && supported.size ? 'Loading the stock catalogue' : supported ? 'pump.fun isn’t accepting stock pairs right now' : 'Loading the stock pairs pump.fun accepts'}</h3>
           <p>{q ? 'Try a ticker like NVDAx or TSLAx.' : 'Reading tokenized stocks from the xStocks issuer.'}</p>
         </div>
       )}

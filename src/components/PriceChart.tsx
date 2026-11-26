@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { AreaSeries, ColorType, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
-import type { Trade } from '../lib/dbc'
+import type { Trade } from '../lib/chain'
 
 /** Price from on-chain trades plus the live pool price; in USD when the pair's price is known. */
 export default function PriceChart({ trades, current, usd, symbol, quote }: { trades: Trade[]; current: number; usd: number | null; symbol: string; quote: string }) {
