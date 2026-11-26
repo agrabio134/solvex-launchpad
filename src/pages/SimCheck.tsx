@@ -15,11 +15,23 @@ export default function SimCheck() {
     }
     ;(async () => {
       try {
-        const payer = new PublicKey('9TNAMr6xphQfcXrJ9ktjbXzY9BBFijzvrQbUoctqiYj1') // funded address, simulation only
-        push({ payerSol: (await connection.getBalance(payer)) / 1e9 })
-        const coins = await fetchCoins(connection)
+        // simulation-only payer: a recently active Jupiter trader holding SOL (nothing is signed or sent)
+        let payer = new PublicKey('9TNAMr6xphQfcXrJ9ktjbXzY9BBFijzvrQbUoctqiYj1')
+        const JUP = new PublicKey('JUP6LkbZbjS1jKKwapdHNd6pSw1G8BpzCyfR8kTp5LUq')
+        for (const sg of await connection.getSignaturesForAddress(JUP, { limit: 12 })) {
+          await new Promise((r) => setTimeout(r, 700))
+          const t = await connection.getTransaction(sg.signature, { maxSupportedTransactionVersion: 0 }).catch(() => null)
+          const k = t?.transaction.message.staticAccountKeys[0]
+          if (k && (await connection.getBalance(k).catch(() => 0)) > 3e9) {
+            payer = k
+            break
+          }
+        }
+        push({ payer: payer.toBase58(), payerSol: (await connection.getBalance(payer)) / 1e9 })
+        const coins = await fetchCoins(connection, { includeUnlisted: true })
         push({ coins: coins.map((c) => ({ s: c.symbol, quote: c.quoteMint.slice(0, 6), mint: c.mint })) })
-        for (const c of coins.slice(0, 3)) {
+        const pick = [coins.find((c) => c.symbol === 'FLOKIAI'), coins.find((c) => c.symbol === 'LIQUID'), coins.find((c) => c.quoteMint.startsWith('So111'))].filter(Boolean) as typeof coins
+        for (const c of pick) {
           for (const amt of ['0.05', '0.5']) {
             try {
               await new Promise((r) => setTimeout(r, 1500))
