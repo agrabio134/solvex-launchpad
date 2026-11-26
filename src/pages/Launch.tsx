@@ -71,15 +71,15 @@ export default function Launch() {
   // each field is checked once it has something in it, so typing a name doesn't flag the empty ticker
   let coinError = ''
   if (name && new TextEncoder().encode(name.trim()).length > 32) coinError = 'Name must be at most 32 bytes.'
-  else if (symbol && !/^[A-Z0-9]{2,10}$/.test(symbol)) coinError = 'Ticker: 2–10 uppercase letters or digits.'
-  if (!coinError && name && symbol) {
+  else if (symbol.length > 1 && !/^[A-Z0-9]{2,10}$/.test(symbol)) coinError = 'Ticker: 2–10 uppercase letters or digits.'
+  if (!coinError && name && symbol.length > 1) {
     try {
       validateLaunch(name, symbol)
     } catch (e: any) {
       coinError = e.message
     }
   }
-  const coinOk = !!image && !!name.trim() && !!symbol && !coinError
+  const coinOk = !!image && !!name.trim() && symbol.length > 1 && !coinError
   const pairOk = !!asset && !asset.halted && !!supported?.has(pair)
   const buy = Number(firstBuy || 0)
   const canLaunch = coinOk && pairOk && agreed && (!isStock || eligible) && buy >= 0
@@ -142,7 +142,7 @@ export default function Launch() {
   }
 
   const goStep = (n: number) => {
-    if (n > 0 && !coinOk) return toast('err', coinError || 'Add an image, a name and a ticker first')
+    if (n > 0 && !coinOk) return toast('err', coinError || (symbol.length === 1 ? 'Ticker: 2–10 uppercase letters or digits.' : 'Add an image, a name and a ticker first'))
     if (n > 1 && !pairOk) return toast('err', pairsErr || 'Choose an available pair first')
     setStep(n)
   }
