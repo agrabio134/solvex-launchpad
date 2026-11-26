@@ -8,6 +8,7 @@ export function compact(n: number, digits = 2): string {
   if (abs >= 1e3) return (n / 1e3).toFixed(digits) + 'K'
   if (abs >= 1) return n.toFixed(digits)
   if (abs === 0) return '0'
+  if (abs < 0.0001) return '<0.0001'
   return n.toPrecision(3)
 }
 
