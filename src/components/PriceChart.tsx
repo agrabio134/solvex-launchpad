@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CandlestickSeries, ColorType, createChart, CrosshairMode, HistogramSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
 import type { Trade } from '../lib/chain'
-import { compact, price as fmtPrice } from '../lib/format'
+import { price as fmtPrice } from '../lib/format'
 
 const FRAMES = [
   ['1m', 60],
@@ -10,6 +10,8 @@ const FRAMES = [
   ['1h', 3600],
 ] as const
 const SUPPLY = 1_000_000_000
+// 4 significant digits, so nearby axis labels stay distinct ($2.003K, $2.010K)
+const axisCompact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 4 })
 
 /**
  * Candles built from pump.fun trade events (each trade's curve price before and after),
@@ -24,7 +26,7 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
   const [mode, setMode] = useState<'mcap' | 'price'>('mcap')
   const mult = (usd ?? 1) * (mode === 'mcap' ? SUPPLY : 1)
   const unit = usd ? '$' : ''
-  const fmt = (v: number) => (mode === 'mcap' ? `${unit}${compact(v)}` : `${unit}${fmtPrice(v)}`)
+  const fmt = (v: number) => (mode === 'mcap' ? `${unit}${axisCompact.format(v)}` : `${unit}${fmtPrice(v)}`)
 
   useEffect(() => {
     if (!el.current) return
@@ -33,7 +35,7 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
       layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#6a7596', fontFamily: 'Instrument Sans, sans-serif', fontSize: 12, attributionLogo: false },
       grid: { vertLines: { color: '#f2f5fb' }, horzLines: { color: '#f2f5fb' } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.22 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 10, minBarSpacing: 4 },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 12, minBarSpacing: 3 },
       crosshair: { mode: CrosshairMode.Normal, vertLine: { color: '#3c5fc455', labelBackgroundColor: '#3c5fc4' }, horzLine: { color: '#3c5fc455', labelBackgroundColor: '#3c5fc4' } },
     })
     chart.current = c
@@ -106,9 +108,10 @@ export default function PriceChart({ trades, current, usd, symbol, quote }: { tr
     if (bars.length) chart.current?.timeScale().scrollToRealTime()
   }, [bars, vols])
 
-  // a new timeframe re-fits the view
+  // fixed candle width (no stretching when there are only a few candles), pinned to the latest
   useEffect(() => {
-    chart.current?.timeScale().fitContent()
+    chart.current?.timeScale().applyOptions({ barSpacing: 12 })
+    chart.current?.timeScale().scrollToRealTime()
   }, [frame, mode])
 
   const now = current * mult
