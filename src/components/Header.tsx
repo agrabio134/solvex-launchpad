@@ -22,8 +22,14 @@ export default function Header() {
           <NavLink to="/stocks">Stock pairs</NavLink>
           <NavLink to="/portfolio">Portfolio</NavLink>
           <NavLink to="/docs">Docs</NavLink>
+          <span className="nav-ca">
+            <b>$FLIP</b> CA: SOON
+          </span>
         </nav>
         <div className="hdr-right">
+          <span className="pill flip-ca" title="The $FLIP contract address is announced soon">
+            <b>$FLIP</b> CA: SOON
+          </span>
           <span className="pill slot" title="Live SOL price in USD">
             <i className="dot" />
             SOL {sol ? `$${sol.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '…'}
