@@ -178,10 +178,10 @@ export async function assertMainnet(connection: Connection) {
 /* -------------------------------------------------------- USD prices */
 
 const usdCache = new Map<string, { at: number; p: Promise<number | null> }>()
-/** USD price of a pair asset (GeckoTerminal, Jupiter fallback), cached 60s. */
+/** USD price of a pair asset (GeckoTerminal, Jupiter fallback), cached 25s. */
 export function quoteUsd(mint: string): Promise<number | null> {
   const hit = usdCache.get(mint)
-  if (hit && Date.now() - hit.at < 60000) return hit.p
+  if (hit && Date.now() - hit.at < 25000) return hit.p
   const p = fetch(`/api/market-data?mint=${mint}`, { signal: AbortSignal.timeout(12000) })
     .then(async (r) => {
       const j = await r.json()
