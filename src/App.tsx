@@ -9,20 +9,21 @@ import Token from './pages/Token'
 import Stocks from './pages/Stocks'
 import Portfolio from './pages/Portfolio'
 import Docs from './pages/Docs'
-import SimCheck from './pages/SimCheck'
+import Ops from './pages/Ops'
 
 export default function App() {
   const { pathname, hash } = useLocation()
+  const ops = pathname === '/' && hash === '#ops'
   useEffect(() => {
-    if (!hash) window.scrollTo(0, 0)
-  }, [pathname, hash])
+    if (!hash || ops) window.scrollTo(0, 0)
+  }, [pathname, hash, ops])
 
   return (
     <>
       <Header />
       <main>
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={ops ? <Ops /> : <Home />} />
           <Route path="/markets" element={<Markets />} />
           <Route path="/board" element={<Navigate to="/markets" replace />} />
           <Route path="/launch" element={<Launch />} />

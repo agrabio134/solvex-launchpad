@@ -12,6 +12,8 @@ import { AssetIcon, CoinImg } from '../components/Bits'
 import { compact } from '../lib/format'
 
 const STEPS = ['Coin', 'Pair', 'Review'] as const
+/** Rent for the config, pool, mint, metadata and vault accounts plus network fees (~0.025 SOL measured), with headroom. */
+const LAUNCH_SOL = 0.035
 const FEES = [
   [100, 'Lower friction'],
   [200, 'Balanced'],
@@ -63,8 +65,8 @@ export default function Launch() {
 
   useEffect(() => {
     if (!publicKey) return setBal(null)
-    quoteBalance(connection, publicKey, pair).then(setBal).catch(() => setBal(null))
-  }, [connection, publicKey, pair])
+    quoteBalance(connection, publicKey, WSOL_MINT.toBase58()).then(setBal).catch(() => setBal(null))
+  }, [connection, publicKey])
 
   const pairs = useMemo(() => {
     const s = pairQ.trim().toLowerCase()
@@ -97,7 +99,14 @@ export default function Launch() {
   const launch = async () => {
     if (!publicKey) return setVisible(true)
     if (!canLaunch) return
-    if (bal !== null && buy > bal) return toast('err', `Your first buy is more than your ${compact(bal)} ${sym}`)
+    try {
+      const lamports = await connection.getBalance(publicKey)
+      const needSol = LAUNCH_SOL + buy + (buy ? 0.01 : 0)
+      if (lamports / 1e9 < needSol)
+        return toast('err', `Not enough SOL. Launching needs about ${LAUNCH_SOL} SOL for rent and network fees${buy ? `, plus your ${buy} SOL first buy` : ''}. Your wallet has ${(lamports / 1e9).toFixed(4)} SOL.`)
+    } catch (e) {
+      return toast('err', errMsg(e))
+    }
     try {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({ address: publicKey.toBase58(), name: name.trim(), symbol, description: description.trim(), image, twitter: twitter.trim(), telegram: telegram.trim(), website: website.trim() })
@@ -114,8 +123,8 @@ export default function Launch() {
             if (!coin) await new Promise((r) => setTimeout(r, 1500))
           }
           if (!coin) throw new Error('the market isn’t visible yet, so buy from the coin page')
-          const p = await prepareSwap(connection, coin, 'buy', firstBuy, 500, publicKey)
-          const bsig = await submit(p.tx, [], setStatus)
+          const p = await prepareSwap(connection, coin, 'buy', firstBuy, 500, publicKey, 'sol')
+          const bsig = await submit(p.tx, [], setStatus, pair === WSOL_MINT.toBase58() ? 'swap' : 'route', p.luts)
           toast('ok', `Bought ${compact(p.out)} $${symbol}`, bsig)
         } catch (e) {
           toast('err', `Launched, but the first buy didn’t go through: ${errMsg(e)}`)
@@ -192,7 +201,7 @@ export default function Launch() {
                 <div className="grid2">
                   <label className="field">
                     Name
-                    <input className="input" maxLength={32} value={name} onChange={(e) => setName(e.target.value)} placeholder="Flip Frog" />
+                    <input className="input" maxLength={32} value={name} onChange={(e) => setName(e.target.value)} placeholder="Moon Frog" />
                   </label>
                   <label className="field">
                     Ticker
@@ -323,11 +332,11 @@ export default function Launch() {
                 </label>
                 <label className="field">
                   <span>
-                    First buy <small>optional, in {sym}{bal !== null ? `. You have ${compact(bal)}` : ''}</small>
+                    First buy <small>optional, in SOL{pair !== WSOL_MINT.toBase58() ? `, swapped to ${sym} for you` : ''}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
                   </span>
                   <div className="affix">
                     <input className="input" inputMode="decimal" value={firstBuy} onChange={(e) => setFirstBuy(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
-                    <i className="post">{sym}</i>
+                    <i className="post">SOL</i>
                   </div>
                 </label>
 
@@ -339,7 +348,7 @@ export default function Launch() {
                   <div><dt>Opening market cap</dt><dd>${compact(OPEN_MCAP_USD, 0)}{caps ? ` (${compact(caps.initialCap)} ${sym})` : ''}</dd></div>
                   <div><dt>Graduates at</dt><dd>${compact(GRAD_MCAP_USD, 0)}{caps ? ` (${compact(caps.graduationCap)} ${sym})` : ''}</dd></div>
                   <div><dt>Trading fee</dt><dd>{shield ? '10% falling to ' : ''}{feeBps / 100}%{dynamic ? ' plus volatility fee' : ''}</dd></div>
-                  <div><dt>Fee split</dt><dd>50% you, 50% Solvex</dd></div>
+                  <div><dt>Fee split</dt><dd>50% you, 50% Flip</dd></div>
                 </dl>
                 <p className="muted small">Network fees and account rent are paid in SOL. Everything is created in one transaction, which is simulated before your wallet asks you to sign.</p>
                 <label className="check">

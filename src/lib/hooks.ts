@@ -1,8 +1,9 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
-import type { Keypair, Transaction } from '@solana/web3.js'
+import type { AddressLookupTableAccount, Keypair, Transaction } from '@solana/web3.js'
 import { CORE_ASSETS, fetchAssets, fetchCoins, quoteUsd, submit, type Asset, type Coin, type SignTx } from './dbc'
 import { FLIP_MINT } from './config'
+import { friendly } from './errors'
 
 /* ------------------------------------------------------------ assets */
 
@@ -70,7 +71,7 @@ export function useUsdMany(mints: string[]) {
 
 /* ------------------------------------------------------------ chain */
 
-/** All Solvex markets, refreshed every `ms`. */
+/** All Flip markets, refreshed every `ms`. */
 export function useCoins(ms = 20000) {
   const { connection } = useConnection()
   const [coins, setCoins] = useState<Coin[]>([])
@@ -115,19 +116,15 @@ export function useSubmit() {
   const { connection } = useConnection()
   const { publicKey, signTransaction } = useWallet()
   return useCallback(
-    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'launch' | 'migrate') => {
+    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'route' | 'launch' | 'migrate', luts: AddressLookupTableAccount[] = []) => {
       if (!publicKey || !signTransaction) throw new Error('Connect a wallet that can sign transactions')
-      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget)
+      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget, luts)
     },
     [connection, publicKey, signTransaction],
   )
 }
 
+/** Plain-language message for any error (wallet, network, simulation, on-chain). */
 export function errMsg(e: any): string {
-  const m = e?.message || String(e)
-  if (/User rejected|rejected the request/i.test(m)) return 'Cancelled in wallet'
-  if (/insufficient/i.test(m)) return 'Insufficient balance'
-  if (/slippage|0x1774|ExceededSlippage/i.test(m)) return 'Price moved past your slippage'
-  if (/429|Too many/i.test(m)) return 'Network is busy, retry in a moment'
-  return m.length > 160 ? m.slice(0, 160) + '…' : m
+  return friendly(e)
 }

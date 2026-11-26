@@ -17,7 +17,7 @@ export default function Header() {
       <div className="hdr-in">
         <Link to="/" className="brand" onClick={() => setOpen(false)}>
           <Logo size={30} />
-          Solvex
+          Flip
         </Link>
         <nav className={`nav ${open ? 'open' : ''}`} onClick={() => setOpen(false)}>
           <NavLink to="/markets">Markets</NavLink>
@@ -39,11 +39,11 @@ export default function Header() {
           >
             <b>$FLIP</b> {flip ? (copied ? 'Copied' : short(flip)) : 'soon'}
           </button>
-          <span className="pill" title="Latest Solana slot">
+          <span className="pill slot" title="Latest Solana slot">
             <i className="dot" />
             {slot ? slot.toLocaleString() : 'Connecting'}
           </span>
-          <a className="icon-btn" href={X_URL} target="_blank" rel="noreferrer" aria-label="Solvex on X">
+          <a className="icon-btn" href={X_URL} target="_blank" rel="noreferrer" aria-label="Flip on X">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden>
               <path d="M18.9 2H22l-7.6 8.7L23 22h-6.9l-5.4-7-6.2 7H1.4l8.1-9.3L1 2h7l4.9 6.4L18.9 2Zm-1.2 18h1.9L7.1 3.9H5.1L17.7 20Z" />
             </svg>

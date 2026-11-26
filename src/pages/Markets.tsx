@@ -42,7 +42,7 @@ export default function Markets() {
       <div className="page-head">
         <div>
           <h1>Markets</h1>
-          <p>Every coin launched on Solvex, read live from Solana.</p>
+          <p>Every coin launched on Flip, read live from Solana.</p>
         </div>
         <Link to="/launch" className="btn btn-primary">
           Launch a coin
@@ -92,7 +92,7 @@ export default function Markets() {
         ) : (
           <div className="empty">
             <h3>{coins.length ? 'Nothing matches' : 'No markets yet'}</h3>
-            <p>{coins.length ? 'Try another filter or search.' : 'Launch the first coin on Solvex. It takes one transaction.'}</p>
+            <p>{coins.length ? 'Try another filter or search.' : 'Launch the first coin on Flip. It takes one transaction.'}</p>
             {!coins.length && (
               <Link to="/launch" className="btn btn-primary">
                 Launch a coin

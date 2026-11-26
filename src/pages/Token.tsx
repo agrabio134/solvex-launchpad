@@ -4,9 +4,10 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { PublicKey } from '@solana/web3.js'
 import { buildClaimFees, buildClaimLpFees, buildMigrate, fetchCoin, fetchTrades, prepareSwap, quoteBalance, tokenBalance, type Coin, type Prepared, type Trade } from '../lib/dbc'
-import { PLATFORM_WALLET, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
+import { PLATFORM_WALLET, WSOL_MINT, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
 import { errMsg, useAssets, useSubmit, useUsd } from '../lib/hooks'
+import { UserError } from '../lib/errors'
 import { useToast } from '../components/Toast'
 import { CoinImg, PairTag, Progress, StatusBadge, usd as fmtUsd } from '../components/Bits'
 import PriceChart from '../components/PriceChart'
@@ -29,7 +30,8 @@ export default function Token() {
   const [quoteErr, setQuoteErr] = useState('')
   const [quoting, setQuoting] = useState(false)
   const [status, setStatus] = useState('')
-  const [bal, setBal] = useState({ quote: 0, token: 0 })
+  const [bal, setBal] = useState({ quote: 0, token: 0, sol: 0 })
+  const [via, setVia] = useState<'sol' | 'pair'>('sol')
   const [trades, setTrades] = useState<Trade[]>([])
   const [copied, setCopied] = useState(false)
   const [eligible, setEligible] = useState(false)
@@ -48,8 +50,12 @@ export default function Token() {
 
   const loadBal = useCallback(async () => {
     if (!publicKey || !coin) return
-    const [q, t] = await Promise.all([quoteBalance(connection, publicKey, coin.quoteMint), tokenBalance(connection, publicKey, new PublicKey(coin.mint))])
-    setBal({ quote: q, token: t })
+    const [q, t, s] = await Promise.all([
+      quoteBalance(connection, publicKey, coin.quoteMint),
+      tokenBalance(connection, publicKey, new PublicKey(coin.mint)),
+      quoteBalance(connection, publicKey, WSOL_MINT.toBase58()),
+    ])
+    setBal({ quote: q, token: t, sol: s })
   }, [connection, publicKey, coin?.mint, coin?.quoteMint])
 
   useEffect(() => {
@@ -67,19 +73,19 @@ export default function Token() {
     if (!coin || !Number(amount) || (coin.complete && !coin.migrated)) return
     setQuoting(true)
     const t = setTimeout(() => {
-      prepareSwap(connection, coin, side, amount, slippage * 100, publicKey ?? PLATFORM_WALLET)
+      prepareSwap(connection, coin, side, amount, slippage * 100, publicKey ?? PLATFORM_WALLET, via)
         .then(setQuote)
         .catch((e) => setQuoteErr(errMsg(e)))
         .finally(() => setQuoting(false))
     }, 400)
     return () => clearTimeout(t)
-  }, [amount, side, slippage, coin?.pool, coin?.complete, coin?.migrated, connection, publicKey])
+  }, [amount, side, slippage, via, coin?.pool, coin?.complete, coin?.migrated, connection, publicKey])
 
   if (missing)
     return (
       <div className="wrap page">
         <div className="surface empty">
-          <h3>This coin isn’t on Solvex</h3>
+          <h3>This coin isn’t on Flip</h3>
           <p>Check the address, or browse every market instead.</p>
           <Link to="/markets" className="btn btn-primary">
             Browse markets
@@ -101,7 +107,11 @@ export default function Token() {
   const isPlatform = !!publicKey && publicKey.equals(PLATFORM_WALLET)
   const needsMigration = coin.complete && !coin.migrated
   const busy = !!status
-  const presets = side === 'sell' ? ['25%', '50%', '75%', '100%'] : q === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['10', '50', '100', '500']
+  const pairIsSol = coin.quoteMint === WSOL_MINT.toBase58()
+  const routed = via === 'sol' && !pairIsSol
+  const unit = routed ? 'SOL' : q // what the user pays (buy) or receives (sell)
+  const payBal = routed ? bal.sol : bal.quote
+  const presets = side === 'sell' ? ['25%', '50%', '75%', '100%'] : unit === 'SOL' ? ['0.1', '0.5', '1', '2'] : ['10', '50', '100', '500']
   const fees = isPlatform ? coin.partnerFeeSvx : coin.creatorFeeSvx
 
   const run = async (label: string, fn: () => Promise<string | void>, done: string) => {
@@ -126,10 +136,15 @@ export default function Token() {
       async () => {
         const n = Number(amount)
         if (!n) return
-        if (side === 'buy' && n > bal.quote) throw new Error(`Not enough ${q}`)
-        if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
-        const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
-        return submit(p.tx, [], setStatus)
+        if (side === 'buy' && n > payBal)
+          throw new UserError(
+            unit === 'SOL'
+              ? `Not enough SOL. You can spend up to ${compact(payBal)} SOL here; about 0.01 SOL stays in your wallet for network fees.`
+              : `You’re paying ${amount} ${q}, but your wallet holds ${compact(payBal)} ${q}.`,
+          )
+        if (side === 'sell' && n > bal.token) throw new UserError(`You’re selling ${amount} $${coin.symbol}, but your wallet holds ${compact(bal.token)}.`)
+        const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!, via)
+        return submit(p.tx, [], setStatus, routed ? 'route' : 'swap', p.luts)
       },
       side === 'buy' ? `Bought $${coin.symbol}` : `Sold $${coin.symbol}`,
     )
@@ -297,15 +312,28 @@ export default function Token() {
                   Sell
                 </button>
               </div>
+              {!pairIsSol && (
+                <div className="bal" style={{ alignItems: 'center' }}>
+                  <span>{side === 'buy' ? 'Pay with' : 'Receive'}</span>
+                  <span className="slip">
+                    <button className={via === 'sol' ? 'on' : ''} onClick={() => { setVia('sol'); setAmount('') }}>
+                      SOL
+                    </button>
+                    <button className={via === 'pair' ? 'on' : ''} onClick={() => { setVia('pair'); setAmount('') }}>
+                      {q}
+                    </button>
+                  </span>
+                </div>
+              )}
               <div className="bal">
-                <span>You pay</span>
+                <span>{side === 'buy' ? 'You pay' : 'You sell'}</span>
                 <span>
-                  Balance {side === 'buy' ? `${compact(bal.quote)} ${q}` : `${compact(bal.token)} ${coin.symbol}`}
+                  Balance {side === 'buy' ? `${compact(payBal)} ${unit}` : `${compact(bal.token)} ${coin.symbol}`}
                 </span>
               </div>
               <div className="affix">
                 <input className="input big" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="Amount" />
-                <i className="post">{side === 'buy' ? q : coin.symbol}</i>
+                <i className="post">{side === 'buy' ? unit : coin.symbol}</i>
               </div>
               <div className="presets">
                 {presets.map((p) => (
@@ -317,7 +345,7 @@ export default function Token() {
               <div className="quote">
                 <div>
                   <span>You receive</span>
-                  <b>{quoting ? 'Calculating…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : q}` : '—'}</b>
+                  <b>{quoting ? 'Calculating…' : quote ? `${compact(quote.out)} ${side === 'buy' ? coin.symbol : unit}` : '—'}</b>
                 </div>
                 <div>
                   <span>Minimum after slippage</span>
@@ -349,7 +377,10 @@ export default function Token() {
                 {!publicKey ? 'Connect wallet' : status || (side === 'buy' ? `Buy $${coin.symbol}` : `Sell $${coin.symbol}`)}
               </button>
               <p className="muted small">
-                Every trade is simulated before you sign. Routed through {coin.migrated ? 'Meteora DAMM v2' : 'the Meteora bonding curve'}.
+                Every trade is simulated before you sign.{' '}
+                {routed
+                  ? `Your SOL is swapped to ${q} through Jupiter and then into $${coin.symbol}, in one transaction. Any small ${q} left over stays in your wallet.`
+                  : `Routed through ${coin.migrated ? 'Meteora DAMM v2' : 'the Meteora bonding curve'}.`}
                 {coin.migrated && (
                   <>
                     {' '}

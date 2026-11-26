@@ -1,4 +1,4 @@
-# Solvex launchpad
+# Flip launchpad
 
 Memecoin launchpad on Meteora's Dynamic Bonding Curve where every market is priced in **$FLIP**.
 Same model as FirePad: each launch creates its own curve config + market in one atomic transaction,

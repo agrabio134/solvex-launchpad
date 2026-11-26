@@ -1,5 +1,5 @@
 /**
- * Solvex on-chain logic (Meteora Dynamic Bonding Curve + DAMM v2), FirePad model:
+ * Flip on-chain logic (Meteora Dynamic Bonding Curve + DAMM v2), FirePad model:
  *
  *  - every launch creates its OWN DBC config + pool in one atomic transaction.
  *    quote mint = $FLIP, fee claimer / leftover receiver = the platform wallet.
@@ -12,8 +12,11 @@
  */
 import BN from 'bn.js'
 import {
+  AddressLookupTableAccount,
   ComputeBudgetProgram,
   Connection,
+  TransactionInstruction,
+  TransactionMessage,
   Keypair,
   PublicKey,
   Transaction,
@@ -66,6 +69,7 @@ import {
   PLATFORM_WALLET,
 } from './config'
 import { fromAtomic, toAtomic, validateLaunch } from './validation'
+import { explainSimulation, UserError } from './errors'
 
 export type CoinStatus = 'new' | 'final' | 'graduated'
 
@@ -231,7 +235,7 @@ function fetchJson(uri: string) {
 
 type Row = { key: PublicKey; pool: VirtualPool; config: PoolConfig }
 
-/** Launched on Solvex (not an older pool that shares the platform wallet). */
+/** Launched on Flip (not an older pool that shares the platform wallet). */
 const listed = (pool: VirtualPool) => Number(pool.poolState.activationPoint.toString()) >= LISTED_AFTER
 
 async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
@@ -314,7 +318,7 @@ async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
   return coins
 }
 
-/** All $FLIP configs created through Solvex (fee claimer = platform wallet). Cached briefly. */
+/** All $FLIP configs created through Flip (fee claimer = platform wallet). Cached briefly. */
 let _cfgs: { at: number; list: Promise<{ key: PublicKey; config: PoolConfig }[]> } | null = null
 async function platformConfigs(connection: Connection) {
   if (!_cfgs || Date.now() - _cfgs.at > 20000) {
@@ -327,14 +331,15 @@ async function platformConfigs(connection: Connection) {
   return _cfgs.list
 }
 
-export async function fetchCoins(connection: Connection): Promise<Coin[]> {
+/** All markets on the platform wallet. `includeUnlisted` also returns pools from before go-live (admin only). */
+export async function fetchCoins(connection: Connection, opts: { includeUnlisted?: boolean } = {}): Promise<Coin[]> {
   const { dbc } = sdk(connection)
   const cfgs = await platformConfigs(connection)
   const rows: Row[] = []
   for (let i = 0; i < cfgs.length; i += 8) {
     const chunk = cfgs.slice(i, i + 8)
     const res = await Promise.all(chunk.map((c) => dbc.state.getPoolsByConfig(c.key)))
-    res.forEach((pools, j) => pools.forEach((p) => listed(p.account) && rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
+    res.forEach((pools, j) => pools.forEach((p) => (opts.includeUnlisted || listed(p.account)) && rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
   }
   const coins = await toCoins(connection, rows)
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -513,46 +518,48 @@ export async function buildLaunch(connection: Connection, creator: PublicKey, p:
 
 export interface Prepared {
   tx: Transaction
+  /** address lookup tables needed to fit routed (Jupiter + Meteora) trades */
+  luts: AddressLookupTableAccount[]
   out: number
   minOut: number
   priceImpact: number | null
   route: string
+  /** what the user pays with / receives: the pair asset, or SOL routed through Jupiter */
+  via: 'pair' | 'sol'
 }
 
-export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell', amount: string, slippageBps: number, owner: PublicKey): Promise<Prepared> {
-  if (!Number.isInteger(slippageBps) || slippageBps < 10 || slippageBps > 1000) throw new Error('Slippage must be 0.1–10%.')
+type Core = { ixs: TransactionInstruction[]; outRaw: BN; minOutRaw: BN; priceImpact: number | null; route: string }
+
+/** One Meteora swap (curve, or DAMM v2 once graduated) with an exact raw input amount. */
+async function coreSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell', amountIn: BN, slippageBps: number, owner: PublicKey): Promise<Core> {
   const { dbc, amm } = sdk(connection)
   const sell = side === 'sell'
   const quoteKey = new PublicKey(coin.quoteMint)
-  const base = await mintInfo(connection, new PublicKey(coin.mint))
+  const baseKey = new PublicKey(coin.mint)
+  const base = await mintInfo(connection, baseKey)
   const quote = await mintInfo(connection, quoteKey)
-  const inDec = sell ? base.decimals : quote.decimals
-  const outDec = sell ? quote.decimals : base.decimals
-  const amountIn = toAtomic(amount, inDec)
   const pool = await dbc.state.getPool(coin.pool)
-  if (!pool) throw new Error('Pool no longer available.')
+  if (!pool) throw new UserError('This market couldn’t be found on-chain. Refresh the page.')
   const config = await dbc.state.getPoolConfig(pool.poolState.config)
-  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET)) throw new Error('Not a Solvex market.')
+  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET)) throw new UserError('This isn’t a Flip market.')
 
   if (pool.poolState.isMigrated) {
-    const address = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_FEE_ADDRESS[config.migrationFeeOption], new PublicKey(coin.mint), config.quoteMint)
+    const address = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_FEE_ADDRESS[config.migrationFeeOption], baseKey, config.quoteMint)
     const state = await amm.fetchPoolState(address)
     const slot = await connection.getSlot()
     const time = await connection.getBlockTime(slot)
-    if (time === null) throw new Error('Chain time unavailable, retry.')
-    const baseKey = new PublicKey(coin.mint)
-    const input = sell ? baseKey : quoteKey
-    const output = sell ? quoteKey : baseKey
+    if (time === null) throw new UserError('Couldn’t read the network time. Try again in a moment.')
     const aIsBase = state.tokenAMint.equals(baseKey)
     const a = aIsBase ? base : quote
     const b = aIsBase ? quote : base
+    const input = sell ? baseKey : quoteKey
     const q = amm.getQuote({ inAmount: amountIn, inputTokenMint: input, slippage: slippageBps / 100, poolState: state, currentTime: time, currentSlot: slot, tokenADecimal: a.decimals, tokenBDecimal: b.decimals })
-    if (!q.consumedInAmount.eq(amountIn)) throw new Error('This amount cannot be fully filled. Try a smaller amount.')
+    if (!q.consumedInAmount.eq(amountIn)) throw new UserError('The pool can’t fill this whole amount. Try a smaller amount.')
     const tx = await amm.swap({
       payer: owner,
       pool: address,
       inputTokenMint: input,
-      outputTokenMint: output,
+      outputTokenMint: sell ? quoteKey : baseKey,
       amountIn,
       minimumAmountOut: q.minSwapOutAmount,
       tokenAMint: state.tokenAMint,
@@ -564,10 +571,10 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
       referralTokenAccount: null,
       poolState: state,
     })
-    return { tx, out: fromAtomic(q.swapOutAmount, outDec), minOut: fromAtomic(q.minSwapOutAmount, outDec), priceImpact: Number(q.priceImpact.toString()), route: 'Meteora DAMM v2' }
+    return { ixs: tx.instructions, outRaw: q.swapOutAmount, minOutRaw: q.minSwapOutAmount, priceImpact: Number(q.priceImpact.toString()), route: 'Meteora DAMM v2' }
   }
 
-  if (pool.poolState.quoteReserve.gte(config.migrationQuoteThreshold)) throw new Error('Curve complete. Migrate it to Solana to keep trading.')
+  if (pool.poolState.quoteReserve.gte(config.migrationQuoteThreshold)) throw new UserError('This curve just filled up, so trading on it has stopped. Migrate it to Solana from this page to keep trading.')
   const q = dbc.pool.swapQuote({
     virtualPool: pool,
     config,
@@ -578,13 +585,94 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
     eligibleForFirstSwapWithMinFee: false,
     currentPoint: await getCurrentPoint(connection, config.activationType),
   })
-  if (q.minimumAmountOut.isZero()) throw new Error('Amount is too small for a protected quote.')
+  if (q.minimumAmountOut.isZero()) throw new UserError('That amount is too small to trade. Enter a bigger amount.')
   const tx = await dbc.pool.swap({ owner, pool: new PublicKey(coin.pool), amountIn, minimumAmountOut: q.minimumAmountOut, swapBaseForQuote: sell, referralTokenAccount: null })
+  const inDec = sell ? base.decimals : quote.decimals
+  const outDec = sell ? quote.decimals : base.decimals
+  const amt = fromAtomic(amountIn, inDec)
   const out = fromAtomic(q.outputAmount, outDec)
-  const spot = coin.priceSvx
-  const amt = Number(amount)
   const exec = sell ? out / amt : amt / out
-  return { tx, out, minOut: fromAtomic(q.minimumAmountOut, outDec), priceImpact: spot && exec ? Math.abs(exec / spot - 1) * 100 : null, route: 'Meteora bonding curve' }
+  return { ixs: tx.instructions, outRaw: q.outputAmount, minOutRaw: q.minimumAmountOut, priceImpact: coin.priceSvx && exec ? Math.abs(exec / coin.priceSvx - 1) * 100 : null, route: 'Meteora bonding curve' }
+}
+
+/* ---- Jupiter (SOL <-> pair asset) ---- */
+
+async function jupQuote(inputMint: string, outputMint: string, amount: BN, slippageBps: number) {
+  const r = await fetch(`/api/jup?op=quote&inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}`, { signal: AbortSignal.timeout(15000) })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || !j.outAmount) throw new UserError(`There’s no SOL route for this pair right now${j?.error ? ` (${j.error})` : ''}. Switch “Pay with” to the pair asset, or try a different amount.`)
+  return j
+}
+
+const toIx = (i: any) =>
+  new TransactionInstruction({
+    programId: new PublicKey(i.programId),
+    keys: i.accounts.map((a: any) => ({ pubkey: new PublicKey(a.pubkey), isSigner: a.isSigner, isWritable: a.isWritable })),
+    data: Buffer.from(i.data, 'base64'),
+  })
+
+async function jupInstructions(connection: Connection, quoteResponse: any, owner: PublicKey) {
+  const r = await fetch('/api/jup?op=swap-instructions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quoteResponse, userPublicKey: owner.toBase58() }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || !j.swapInstruction) throw new UserError('Couldn’t build the SOL route right now. Try again, or pay with the pair asset.')
+  const ixs: TransactionInstruction[] = [...(j.setupInstructions ?? []).map(toIx), toIx(j.swapInstruction), ...(j.cleanupInstruction ? [toIx(j.cleanupInstruction)] : [])]
+  const luts = (await Promise.all((j.addressLookupTableAddresses ?? []).map((a: string) => connection.getAddressLookupTable(new PublicKey(a)).then((r) => r.value)))).filter(Boolean) as AddressLookupTableAccount[]
+  return { ixs, luts }
+}
+
+/**
+ * Builds a buy or sell. `via: 'sol'` lets anyone trade any market with SOL: buying routes
+ * SOL → pair asset (Jupiter) → coin (Meteora) in one transaction; selling routes coin → pair asset → SOL.
+ * The Jupiter leg uses the Meteora leg's guaranteed minimum, so any small surplus of the pair asset stays in the wallet.
+ */
+export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell', amount: string, slippageBps: number, owner: PublicKey, via: 'pair' | 'sol' = 'pair'): Promise<Prepared> {
+  if (!Number.isInteger(slippageBps) || slippageBps < 10 || slippageBps > 1000) throw new UserError('Slippage must be between 0.1% and 10%.')
+  const sell = side === 'sell'
+  const base = await mintInfo(connection, new PublicKey(coin.mint))
+  const quote = await mintInfo(connection, new PublicKey(coin.quoteMint))
+  const routed = via === 'sol' && coin.quoteMint !== WSOL_MINT.toBase58()
+
+  if (!routed) {
+    const inDec = sell ? base.decimals : quote.decimals
+    const outDec = sell ? quote.decimals : base.decimals
+    const c = await coreSwap(connection, coin, side, toAtomic(amount, inDec), slippageBps, owner)
+    return { tx: new Transaction().add(...c.ixs), luts: [], out: fromAtomic(c.outRaw, outDec), minOut: fromAtomic(c.minOutRaw, outDec), priceImpact: c.priceImpact, route: c.route, via }
+  }
+
+  // split slippage across the two legs so the total stays within what the user chose
+  const leg = Math.max(10, Math.floor(slippageBps / 2))
+  if (!sell) {
+    const jq = await jupQuote(WSOL_MINT.toBase58(), coin.quoteMint, toAtomic(amount, 9), leg)
+    const pairMin = new BN(jq.otherAmountThreshold)
+    const c = await coreSwap(connection, coin, 'buy', pairMin, leg, owner)
+    const j = await jupInstructions(connection, jq, owner)
+    return {
+      tx: new Transaction().add(...j.ixs, ...c.ixs),
+      luts: j.luts,
+      out: fromAtomic(c.outRaw, base.decimals),
+      minOut: fromAtomic(c.minOutRaw, base.decimals),
+      priceImpact: c.priceImpact != null ? c.priceImpact + Number(jq.priceImpactPct ?? 0) * 100 : null,
+      route: `SOL to pair asset via Jupiter, then ${c.route}`,
+      via,
+    }
+  }
+  const c = await coreSwap(connection, coin, 'sell', toAtomic(amount, base.decimals), leg, owner)
+  const jq = await jupQuote(coin.quoteMint, WSOL_MINT.toBase58(), c.minOutRaw, leg)
+  const j = await jupInstructions(connection, jq, owner)
+  return {
+    tx: new Transaction().add(...c.ixs, ...j.ixs),
+    luts: j.luts,
+    out: fromAtomic(new BN(jq.outAmount), 9),
+    minOut: fromAtomic(new BN(jq.otherAmountThreshold), 9),
+    priceImpact: c.priceImpact != null ? c.priceImpact + Number(jq.priceImpactPct ?? 0) * 100 : null,
+    route: `${c.route}, then pair asset to SOL via Jupiter`,
+    via,
+  }
 }
 
 /* ------------------------------------------------- graduation + fees */
@@ -673,13 +761,13 @@ export type SignTx = <T extends Transaction | VersionedTransaction>(tx: T) => Pr
  * Builds the exact transaction the wallet will sign. Launches (extra signers, near the 1232-byte limit)
  * carry no compute-budget instructions: they fit the default compute limit. Migration keeps a raised limit.
  */
-export function compileForWallet(tx: Transaction, payer: PublicKey, blockhash: string, signers: Keypair[], budget: 'swap' | 'launch' | 'migrate') {
-  const fresh = new Transaction().add(...tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId)))
-  fresh.feePayer = payer
-  fresh.recentBlockhash = blockhash
-  if (budget === 'swap') fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
-  if (budget === 'migrate') fresh.instructions.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
-  const vtx = new VersionedTransaction(fresh.compileMessage())
+export function compileForWallet(tx: Transaction, payer: PublicKey, blockhash: string, signers: Keypair[], budget: 'swap' | 'route' | 'launch' | 'migrate', luts: AddressLookupTableAccount[] = []) {
+  const ixs = tx.instructions.filter((ix) => !ix.programId.equals(ComputeBudgetProgram.programId))
+  if (budget === 'swap') ixs.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+  if (budget === 'route') ixs.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 900_000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }))
+  if (budget === 'migrate') ixs.unshift(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
+  const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(luts)
+  const vtx = new VersionedTransaction(msg)
   if (signers.length) vtx.sign(signers)
   return vtx
 }
@@ -691,33 +779,84 @@ export async function submit(
   tx: Transaction,
   signers: Keypair[],
   onStatus: (s: string) => void,
-  budget: 'swap' | 'launch' | 'migrate' = signers.length ? 'launch' : 'swap',
+  budget: 'swap' | 'route' | 'launch' | 'migrate' = signers.length ? 'launch' : 'swap',
+  luts: AddressLookupTableAccount[] = [],
 ) {
   await assertMainnet(connection)
-  const latest = await connection.getLatestBlockhash('confirmed')
-  const vtx = compileForWallet(tx, owner, latest.blockhash, signers, budget)
-  if (vtx.serialize().length > 1232) throw new Error('This launch is too large for one Solana transaction. Use a shorter name or ticker.')
-
-  onStatus('Simulating on mainnet…')
-  const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed', replaceRecentBlockhash: false })
-  if (sim.value.err) {
-    const logs = (sim.value.logs ?? []).join('\n')
-    const hint = /insufficient|0x1\b/i.test(logs) ? ' (insufficient balance)' : /slippage|0x1774|ExceededSlippage/i.test(logs) ? ' (price moved)' : ''
-    throw new Error(`Simulation failed${hint}. Nothing was sent.`)
+  const [latest, lamports] = await Promise.all([connection.getLatestBlockhash('confirmed'), connection.getBalance(owner, 'confirmed')])
+  if (lamports < 10_000) throw new UserError('Your wallet has no SOL to pay the network fee. Add at least 0.01 SOL and try again.')
+  let vtx: VersionedTransaction
+  try {
+    vtx = compileForWallet(tx, owner, latest.blockhash, signers, budget, luts)
+    if (vtx.serialize().length > 1232) throw new Error('too large')
+  } catch {
+    throw new UserError(budget === 'launch' ? 'This launch is too large for one Solana transaction. Use a shorter name or ticker.' : budget === 'route' ? 'This SOL route is too complex for one transaction. Try a different amount, or pay with the pair asset.' : 'This transaction is too large to send. Try a smaller amount.')
   }
+
+  onStatus('Checking the transaction…')
+  const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed', replaceRecentBlockhash: false })
+  if (sim.value.err) throw new UserError(explainSimulation(sim.value.err, sim.value.logs ?? [], lamports))
 
   onStatus('Approve in your wallet…')
   const signed = await signTransaction(vtx)
-  if (!Buffer.from(signed.message.serialize()).equals(Buffer.from(vtx.message.serialize()))) throw new Error('Wallet changed the transaction; stopped.')
+  if (!Buffer.from(signed.message.serialize()).equals(Buffer.from(vtx.message.serialize()))) throw new UserError('Your wallet changed the transaction, so it wasn’t sent.')
   const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 3 })
 
   onStatus('Confirming…')
   for (let i = 0; i < 60; i++) {
     const st = (await connection.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0]
-    if (st?.err) throw new Error(`Transaction failed on-chain: ${sig}`)
+    if (st?.err) throw new UserError('The transaction failed on-chain after it was sent. The network fee was charged; nothing else moved. Check it on Solscan and try again.')
     if (st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized') return sig
-    if ((await connection.getBlockHeight('confirmed')) > latest.lastValidBlockHeight) throw new Error(`Transaction expired. Check ${sig} before retrying.`)
+    if ((await connection.getBlockHeight('confirmed')) > latest.lastValidBlockHeight) throw new UserError('The network took too long and the transaction expired. Nothing was charged. Try again.')
     await new Promise((r) => setTimeout(r, 1500))
   }
-  throw new Error(`Still confirming. Check ${sig} before retrying.`)
+  throw new UserError('Still waiting for the network to confirm. Check your wallet history before trying again.')
+}
+
+export type SignAll = <T extends Transaction | VersionedTransaction>(txs: T[]) => Promise<T[]>
+
+/**
+ * Many independent transactions (e.g. fee claims across markets): simulate each, sign all in one
+ * wallet prompt, then send and confirm one by one. Reports each result instead of stopping at the first failure.
+ */
+export async function submitMany(
+  connection: Connection,
+  owner: PublicKey,
+  signAllTransactions: SignAll,
+  items: { label: string; tx: Transaction }[],
+  onStatus: (s: string) => void,
+) {
+  await assertMainnet(connection)
+  const lamports = await connection.getBalance(owner, 'confirmed')
+  if (lamports < 10_000 * items.length) throw new UserError(`This wallet needs SOL for network fees: about ${(0.00001 * items.length + 0.003).toFixed(4)} SOL for ${items.length} claims. It has ${(lamports / 1e9).toPrecision(2)} SOL.`)
+  const latest = await connection.getLatestBlockhash('confirmed')
+  const ready: { label: string; vtx: VersionedTransaction }[] = []
+  const results: { label: string; ok: boolean; detail: string; sig?: string }[] = []
+  for (const [i, it] of items.entries()) {
+    onStatus(`Checking ${i + 1} of ${items.length}…`)
+    const vtx = compileForWallet(it.tx, owner, latest.blockhash, [], 'swap')
+    const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed' })
+    if (sim.value.err) results.push({ label: it.label, ok: false, detail: explainSimulation(sim.value.err, sim.value.logs ?? [], lamports) })
+    else ready.push({ label: it.label, vtx })
+  }
+  if (!ready.length) return results
+  onStatus(`Approve ${ready.length} transaction${ready.length > 1 ? 's' : ''} in your wallet…`)
+  const signed = await signAllTransactions(ready.map((r) => r.vtx))
+  for (const [i, tx] of signed.entries()) {
+    onStatus(`Sending ${i + 1} of ${signed.length}…`)
+    try {
+      const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 3 })
+      let done = false
+      for (let k = 0; k < 40 && !done; k++) {
+        const st = (await connection.getSignatureStatuses([sig])).value[0]
+        if (st?.err) throw new Error('failed on-chain')
+        done = st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized'
+        if (!done) await new Promise((r) => setTimeout(r, 1500))
+      }
+      results.push({ label: ready[i].label, ok: done, detail: done ? 'Claimed' : 'Still confirming, check Solscan', sig })
+    } catch (e: any) {
+      results.push({ label: ready[i].label, ok: false, detail: e?.message === 'failed on-chain' ? 'Failed on-chain' : 'Couldn’t send, try again' })
+    }
+  }
+  return results
 }
