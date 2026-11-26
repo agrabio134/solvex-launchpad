@@ -128,7 +128,7 @@ export default function Markets() {
 
       {showTop && top && <TopCoin coin={top} price={prices[top.quoteMint]} />}
 
-      {view === 'grid' && !error && list.length > 0 ? (
+      {showTop && !error && list.length === 0 ? null : view === 'grid' && !error && list.length > 0 ? (
         <div className="mgrid">
           {list.map((c) => (
             <MarketCard key={c.pool} coin={c} price={prices[c.quoteMint]} />
