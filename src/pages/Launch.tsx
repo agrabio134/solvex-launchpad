@@ -65,8 +65,8 @@ export default function Launch() {
 
   useEffect(() => {
     if (!publicKey) return setBal(null)
-    quoteBalance(connection, publicKey, pair).then(setBal).catch(() => setBal(null))
-  }, [connection, publicKey, pair])
+    quoteBalance(connection, publicKey, WSOL_MINT.toBase58()).then(setBal).catch(() => setBal(null))
+  }, [connection, publicKey])
 
   const pairs = useMemo(() => {
     const s = pairQ.trim().toLowerCase()
@@ -101,10 +101,9 @@ export default function Launch() {
     if (!canLaunch) return
     try {
       const lamports = await connection.getBalance(publicKey)
-      const needSol = LAUNCH_SOL + (pair === WSOL_MINT.toBase58() ? buy : 0)
+      const needSol = LAUNCH_SOL + buy + (buy ? 0.01 : 0)
       if (lamports / 1e9 < needSol)
-        return toast('err', `Not enough SOL. Launching needs about ${LAUNCH_SOL} SOL for rent and network fees${pair === WSOL_MINT.toBase58() && buy ? `, plus your ${buy} SOL first buy` : ''}. Your wallet has ${(lamports / 1e9).toFixed(4)} SOL.`)
-      if (pair !== WSOL_MINT.toBase58() && bal !== null && buy > bal) return toast('err', `Your first buy is ${buy} ${sym}, but your wallet holds ${compact(bal)} ${sym}. Lower it or leave it empty.`)
+        return toast('err', `Not enough SOL. Launching needs about ${LAUNCH_SOL} SOL for rent and network fees${buy ? `, plus your ${buy} SOL first buy` : ''}. Your wallet has ${(lamports / 1e9).toFixed(4)} SOL.`)
     } catch (e) {
       return toast('err', errMsg(e))
     }
@@ -124,8 +123,8 @@ export default function Launch() {
             if (!coin) await new Promise((r) => setTimeout(r, 1500))
           }
           if (!coin) throw new Error('the market isn’t visible yet, so buy from the coin page')
-          const p = await prepareSwap(connection, coin, 'buy', firstBuy, 500, publicKey)
-          const bsig = await submit(p.tx, [], setStatus)
+          const p = await prepareSwap(connection, coin, 'buy', firstBuy, 500, publicKey, 'sol')
+          const bsig = await submit(p.tx, [], setStatus, pair === WSOL_MINT.toBase58() ? 'swap' : 'route', p.luts)
           toast('ok', `Bought ${compact(p.out)} $${symbol}`, bsig)
         } catch (e) {
           toast('err', `Launched, but the first buy didn’t go through: ${errMsg(e)}`)
@@ -333,11 +332,11 @@ export default function Launch() {
                 </label>
                 <label className="field">
                   <span>
-                    First buy <small>optional, in {sym}{bal !== null ? `. You have ${compact(bal)}` : ''}</small>
+                    First buy <small>optional, in SOL{pair !== WSOL_MINT.toBase58() ? `, swapped to ${sym} for you` : ''}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
                   </span>
                   <div className="affix">
                     <input className="input" inputMode="decimal" value={firstBuy} onChange={(e) => setFirstBuy(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
-                    <i className="post">{sym}</i>
+                    <i className="post">SOL</i>
                   </div>
                 </label>
 

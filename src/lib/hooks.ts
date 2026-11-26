@@ -1,6 +1,6 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
-import type { Keypair, Transaction } from '@solana/web3.js'
+import type { AddressLookupTableAccount, Keypair, Transaction } from '@solana/web3.js'
 import { CORE_ASSETS, fetchAssets, fetchCoins, quoteUsd, submit, type Asset, type Coin, type SignTx } from './dbc'
 import { FLIP_MINT } from './config'
 import { friendly } from './errors'
@@ -116,9 +116,9 @@ export function useSubmit() {
   const { connection } = useConnection()
   const { publicKey, signTransaction } = useWallet()
   return useCallback(
-    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'launch' | 'migrate') => {
+    async (tx: Transaction, signers: Keypair[] = [], onStatus: (s: string) => void = () => {}, budget?: 'swap' | 'route' | 'launch' | 'migrate', luts: AddressLookupTableAccount[] = []) => {
       if (!publicKey || !signTransaction) throw new Error('Connect a wallet that can sign transactions')
-      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget)
+      return submit(connection, publicKey, signTransaction as SignTx, tx, signers, onStatus, budget, luts)
     },
     [connection, publicKey, signTransaction],
   )
