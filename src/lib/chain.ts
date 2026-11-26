@@ -524,6 +524,12 @@ type Core = { ixs: TransactionInstruction[]; outRaw: BN; minOutRaw: BN; priceImp
 
 const applySlip = (v: BN, bps: number) => v.muln(10_000 - bps).divn(10_000)
 
+/** Live curve price in pair units per coin (constant product: virtual quote / virtual tokens). */
+const spotPrice = (c: BondingCurve, qd: number) => {
+  const t = fromAtomic(c.virtualTokenReserves, TOKEN_DECIMALS)
+  return t > 0 ? fromAtomic(c.virtualQuoteReserves, qd) / t : 0
+}
+
 /** One pump.fun bonding-curve trade with an exact raw input (pair asset for buys, coin for sells). */
 async function curveSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell', amountIn: BN, slippageBps: number, owner: PublicKey): Promise<Core> {
   const sdk = pump(connection)
@@ -543,7 +549,8 @@ async function curveSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell
     const amt = fromAtomic(amountIn, qd)
     const got = fromAtomic(out, TOKEN_DECIMALS)
     const exec = got ? amt / got : 0
-    return { ixs, outRaw: out, minOutRaw: applySlip(out, slippageBps), priceImpact: coin.priceSvx && exec ? Math.abs(exec / coin.priceSvx - 1) * 100 : null, route: 'pump.fun bonding curve' }
+    const spot = spotPrice(st.bondingCurve, qd)
+    return { ixs, outRaw: out, minOutRaw: applySlip(out, slippageBps), priceImpact: spot && exec ? Math.abs(exec / spot - 1) * 100 : null, route: 'pump.fun bonding curve' }
   }
 
   const st = await sdk.fetchSellState(mint, owner, tokenProgram, hint)
@@ -554,7 +561,8 @@ async function curveSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell
   const amt = fromAtomic(amountIn, TOKEN_DECIMALS)
   const got = fromAtomic(outQ, qd)
   const exec = amt ? got / amt : 0
-  return { ixs, outRaw: outQ, minOutRaw: applySlip(outQ, slippageBps), priceImpact: coin.priceSvx && exec ? Math.abs(exec / coin.priceSvx - 1) * 100 : null, route: 'pump.fun bonding curve' }
+  const spot = spotPrice(st.bondingCurve, qd)
+  return { ixs, outRaw: outQ, minOutRaw: applySlip(outQ, slippageBps), priceImpact: spot && exec ? Math.abs(exec / spot - 1) * 100 : null, route: 'pump.fun bonding curve' }
 }
 
 /* ---- Jupiter ---- */

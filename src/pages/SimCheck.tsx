@@ -4,7 +4,7 @@ import { useConnection } from '@solana/wallet-adapter-react'
 import { PublicKey } from '@solana/web3.js'
 import { OnlinePumpSdk, bondingCurvePda } from '@pump-fun/pump-sdk'
 import { tokenBalance } from '../lib/chain'
-import { parsedTx, buildLaunch, compileForWallet, fetchCoinsByMints, fetchPairMints, prepareSwap, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, type Coin } from '../lib/chain'
+import { buildClaimFees, parsedTx, buildLaunch, compileForWallet, fetchCoinsByMints, fetchPairMints, prepareSwap, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, type Coin } from '../lib/chain'
 
 const WSOL = 'So11111111111111111111111111111111111111112'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -76,6 +76,18 @@ export default function SimCheck() {
           if (bal > 1) await trade(c, 'sell', String(Math.floor(bal / 10)), new PublicKey(h.owner), 'sol')
           else push({ label: `SELL $${c.symbol}`, skipped: 'holder has no tokens now' })
         }
+        // a curve coin quoted in a token (PUMP): SOL-routed and direct buys
+        const [tokCoin] = await fetchCoinsByMints(connection, ['5qugbTbcwZz9MykFPDFMvbVTQnodEiqW6fBwPf1apump'])
+        if (tokCoin) {
+          push({ tokCoin: { s: tokCoin.symbol, q: tokCoin.quoteMint, complete: tokCoin.complete, price: tokCoin.priceSvx, prog: tokCoin.progress } })
+          if (!tokCoin.complete) {
+            await trade(tokCoin, 'buy', '0.05', payer, 'sol')
+            await trade(tokCoin, 'buy', '0.5', payer, 'sol')
+          }
+        }
+        // creator fee claim, simulated as each creator
+        for (const c of coins.slice(0, 3)) await sim(`CLAIM creator fees $${c.symbol} (curve ${c.creatorFeeSvx})`, async () => ({ tx: await buildClaimFees(connection, c, new PublicKey(c.creator)), budget: 'claim' }), new PublicKey(c.creator))
+        push({ registry: await fetch('/api/coins').then((r) => r.status + ' ' + r.statusText) })
         push({ done: true })
       } catch (e: any) {
         push({ fatal: e?.message, stack: String(e?.stack ?? '').split('\n').slice(0, 4) })
