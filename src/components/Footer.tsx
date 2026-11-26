@@ -35,7 +35,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="ftr-base">
-        <span>© {new Date().getFullYear()} Flip. Built on Meteora.</span>
+        <span>© {new Date().getFullYear()} Flip. Built on pump.fun.</span>
         <span>Memecoins are volatile and can lose all value. Tokenized stock pairs are subject to issuer terms.</span>
       </div>
     </footer>

@@ -1,16 +1,15 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAssets, useCoins, useUsdMany } from '../lib/hooks'
-import { GRAD_MCAP_USD, OPEN_MCAP_USD } from '../lib/config'
 import { ago, compact } from '../lib/format'
 import { AssetIcon, CoinImg, MarketHead, MarketRow, PairTag, usd } from '../components/Bits'
 
 const FAQ: [string, string][] = [
-  ['What can I pair my coin with?', 'SOL, USDC, or any tokenized stock or ETF the xStocks issuer has on Solana, such as NVDAx or TSLAx. Traders buy your coin with the pair you choose, and fees are earned in it. $FLIP joins the list when it launches.'],
+  ['What can I pair my coin with?', 'SOL, USDC, or any tokenized stock or ETF the xStocks issuer has on Solana, such as NVDAx or TSLAx. Traders buy your coin with the pair you choose, and creator fees are earned in it. The list follows what pump.fun accepts for new coins.'],
   ['Does a stock pair mean my coin is backed by the stock?', 'No. The stock is only the currency traders use to buy your coin. Tokenized stocks are issued by xStocks, are not brokerage shares, and come with issuer terms and regional restrictions.'],
-  ['How is the price set?', 'Each coin trades on its own Meteora bonding curve. Buys move the price up and sells move it down. No presale and no team allocation: everyone buys from the same curve.'],
-  ['What happens at graduation?', `Every coin opens near a $${compact(OPEN_MCAP_USD, 0)} market cap. When it reaches about $${compact(GRAD_MCAP_USD, 0)}, the curve is full and anyone can migrate it into a Meteora DAMM v2 pool on Solana. That liquidity is locked forever, and trading continues on the same page and on Jupiter.`],
-  ['What do creators earn?', 'Creators pick a 1–3% trading fee. After Meteora’s share, half goes to the creator and half to Flip. Both also earn fees from the locked liquidity after graduation.'],
+  ['How is the price set?', 'Every coin is a pump.fun coin with its own bonding curve. Buys move the price up and sells move it down. No presale and no team allocation: everyone buys from the same curve.'],
+  ['What happens at graduation?', 'When the last tokens on the curve are bought, the curve completes and pump.fun moves the liquidity into a PumpSwap pool automatically. Trading continues on the same page, on pump.fun and on Jupiter.'],
+  ['What do creators earn?', 'pump.fun pays creators a share of every trade, on the curve and after graduation on PumpSwap. Claim it from your Portfolio or the coin page. Flip takes no extra fee.'],
   ['Is this financial advice?', 'No. Memecoins are extremely volatile and most lose their value. Only use what you can afford to lose.'],
 ]
 
@@ -99,15 +98,15 @@ export default function Home() {
           </div>
           <div>
             <b>{graduated}</b>
-            <span>Graduated to Solana</span>
+            <span>Graduated to PumpSwap</span>
           </div>
           <div>
-            <b>${compact(OPEN_MCAP_USD, 0)}</b>
-            <span>Opening market cap</span>
+            <b>1B</b>
+            <span>Fixed supply per coin</span>
           </div>
           <div>
-            <b>${compact(GRAD_MCAP_USD, 0)}</b>
-            <span>Graduation market cap</span>
+            <b>0%</b>
+            <span>Extra fee from Flip</span>
           </div>
         </div>
       </section>
@@ -148,15 +147,15 @@ export default function Home() {
         <div className="steps">
           <div className="surface step">
             <h3>Create your coin</h3>
-            <p>Add an image, a name and a ticker, then pick a pair: SOL, USDC or a tokenized stock. One transaction creates the coin and its market.</p>
+            <p>Add an image, a name and a ticker, then pick a pair: SOL, USDC or a tokenized stock. One transaction creates the coin on pump.fun.</p>
           </div>
           <div className="surface step">
             <h3>Trade on the curve</h3>
-            <p>Anyone can buy and sell straight away. The price follows Meteora’s bonding curve, and you earn half of every trading fee.</p>
+            <p>Anyone can buy and sell straight away. The price follows the pump.fun bonding curve, and you earn a creator share of every trade.</p>
           </div>
           <div className="surface step">
-            <h3>Graduate to Solana</h3>
-            <p>At about ${compact(GRAD_MCAP_USD, 0)} the curve fills. One click moves it into a locked Meteora pool, and it keeps trading here and on Jupiter.</p>
+            <h3>Graduate to PumpSwap</h3>
+            <p>When the curve completes, pump.fun moves the liquidity to PumpSwap on its own, and the coin keeps trading here and on Jupiter.</p>
           </div>
         </div>
       </section>

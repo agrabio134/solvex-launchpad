@@ -1,16 +1,13 @@
 import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
-import { useSlot } from '../lib/hooks'
-import { FLIP_MINT, X_URL } from '../lib/config'
-import { short } from '../lib/format'
+import { useSolPrice } from '../lib/hooks'
+import { X_URL } from '../lib/config'
 import Logo from './Logo'
 
 export default function Header() {
-  const slot = useSlot()
+  const sol = useSolPrice()
   const [open, setOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const flip = FLIP_MINT?.toBase58()
 
   return (
     <header className="hdr">
@@ -27,21 +24,9 @@ export default function Header() {
           <NavLink to="/docs">Docs</NavLink>
         </nav>
         <div className="hdr-right">
-          <button
-            className="pill"
-            title={flip ? 'Copy the $FLIP contract address' : '$FLIP launches soon'}
-            onClick={() => {
-              if (!flip) return
-              navigator.clipboard.writeText(flip)
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1200)
-            }}
-          >
-            <b>$FLIP</b> {flip ? (copied ? 'Copied' : short(flip)) : 'soon'}
-          </button>
-          <span className="pill slot" title="Latest Solana slot">
+          <span className="pill slot" title="Live SOL price in USD">
             <i className="dot" />
-            {slot ? slot.toLocaleString() : 'Connecting'}
+            SOL {sol ? `$${sol.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '…'}
           </span>
           <a className="icon-btn" href={X_URL} target="_blank" rel="noreferrer" aria-label="Flip on X">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden>

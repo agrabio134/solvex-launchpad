@@ -12,34 +12,40 @@ const sol = (lamports: number) => {
   return v >= 0.01 ? v.toFixed(3) : v.toPrecision(2)
 }
 
-/** Meteora DBC / DAMM v2 program errors that users can actually hit, in plain words. */
-const PROGRAM: Record<string, string> = {
-  exceededSlippage: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
-  poolIsCompleted: 'This curve just filled up, so trading on it has stopped. Migrate it to Solana from the coin page to keep trading.',
-  notEnoughLiquidity: 'There isn’t enough liquidity for a trade this size. Try a smaller amount.',
-  insufficientLiquidity: 'There isn’t enough liquidity for a trade this size. Try a smaller amount.',
-  insufficientLiquidityForMigration: 'This curve doesn’t hold enough liquidity to migrate yet.',
-  poolIsIncompleted: 'This curve isn’t full yet, so it can’t be migrated.',
-  amountIsZero: 'That amount is too small to trade. Enter a bigger amount.',
-  exceededInputAmount: 'That amount is more than this curve can take before it fills. Try a smaller amount.',
-  poolDisabled: 'Trading on this pool is paused.',
-  notPermitToDoThisAction: 'This wallet isn’t allowed to do that on this market.',
-  unauthorized: 'This wallet isn’t allowed to do that on this market.',
-  invalidFeeClaimer: 'Only the platform wallet can claim the platform’s fees.',
-  invalidOwnerAccount: 'Only the coin’s creator can claim these fees.',
-  incorrectAta: 'A token account in this transaction doesn’t match your wallet. Refresh the page and try again.',
-  invalidQuoteMint: 'That pair asset isn’t supported for launches.',
-  quoteMintHasNonZeroTransferFee: 'That pair asset charges a transfer fee, which launches don’t support.',
-  invalidTokenBadge: 'That pair asset needs a Meteora token badge before it can be used.',
-  mathOverflow: 'That amount is too large to process. Try a smaller amount.',
+/** pump.fun bonding-curve errors that users can actually hit, in plain words (codes from the pump program IDL). */
+const PUMP: Record<number, string> = {
+  6002: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
+  6003: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
+  6042: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
+  6005: 'This curve just completed and pump.fun is moving it to PumpSwap. Trading resumes on this page in a minute.',
+  6081: 'This coin has graduated to PumpSwap. Refresh the page to trade it there.',
+  6107: 'This coin has graduated and is waiting for its PumpSwap pool. Try again in a minute.',
+  6020: 'That amount is too small to trade. Enter a bigger amount.',
+  6022: 'That amount is too small to trade. Enter a bigger amount.',
+  6021: 'There aren’t enough tokens left on the curve for a buy this size. Try a smaller amount.',
+  6023: 'There isn’t enough in the curve for a sell this size. Try a smaller amount.',
+  6040: 'Not enough SOL to cover the account rent for this buy. Add a little SOL and try again.',
+  6041: 'Not enough to cover the trading fees for this amount. Lower it a little and try again.',
+  6043: 'The coin name is too long for pump.fun. Use a shorter name.',
+  6044: 'The ticker is too long for pump.fun. Use a shorter ticker.',
+  6045: 'The metadata link is too long. Try the launch again.',
+  6046: 'pump.fun has paused new coin creation for now. Try again later.',
+  6063: 'pump.fun doesn’t accept this pair asset for new coins. Choose another pair.',
+  6064: 'pump.fun doesn’t accept this pair asset for new coins. Choose another pair.',
+  6065: 'The pair asset’s account in this launch is wrong. Refresh the page and try again.',
+  6082: 'Cashback coins can no longer be created on pump.fun.',
+  6024: 'That amount is too large to process. Try a smaller amount.',
+  6000: 'This wallet isn’t allowed to do that on this coin.',
+  6019: 'Only the coin’s creator can do that.',
 }
-const DBC = ['mathOverflow', 'invalidFee', 'exceededSlippage', 'exceedMaxFeeBps', 'invalidAdmin', 'amountIsZero', 'typeCastFailed', 'invalidActivationType', 'invalidQuoteMint', 'invalidCollectFeeMode', 'invalidMigrationFeeOption', 'invalidInput', 'notEnoughLiquidity', 'poolIsCompleted', 'poolIsIncompleted', 'invalidMigrationOption', 'invalidTokenDecimals', 'invalidTokenType', 'invalidFeePercentage', 'invalidQuoteThreshold', 'invalidTokenSupply', 'invalidCurve', 'notPermitToDoThisAction', 'invalidOwnerAccount', 'invalidConfigAccount', 'surplusHasBeenWithdraw', 'leftoverHasBeenWithdraw', 'totalBaseTokenExceedMaxSupply', 'unsupportNativeMintToken2022', 'insufficientLiquidityForMigration', 'missingPoolConfigInRemainingAccount', 'invalidVestingParameters', 'invalidLeftoverAddress', 'insufficientLiquidity']
-const DBC_TAIL: Record<number, string> = { 6053: 'unauthorized', 6058: 'incorrectAta', 6080: 'invalidTokenBadge', 6081: 'quoteMintHasNonZeroTransferFee', 6085: 'exceededInputAmount', 6086: 'invalidFeeClaimer' }
-const AMM: Record<number, string> = { 6000: 'mathOverflow', 6002: 'exceededSlippage', 6003: 'poolDisabled', 6006: 'amountIsZero', 6023: 'insufficientLiquidity', 6060: 'incorrectAta' }
-const DBC_ID = 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'
-const AMM_ID = 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'
-
-const human = (name: string) => name.replace(/([A-Z])/g, ' $1').toLowerCase()
+/** PumpSwap AMM errors (after graduation). */
+const AMM: Record<number, string> = {
+  6004: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
+  6040: 'The price moved past your slippage limit before the trade landed. Nothing was spent. Try again, or allow a little more slippage.',
+}
+const PUMP_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
+const AMM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
+const JUP_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'
 
 /** Reads a failed simulation (error + logs) and says what went wrong in plain words. */
 export function explainSimulation(err: unknown, logs: string[], walletLamports: number): string {
@@ -65,11 +71,10 @@ export function explainSimulation(err: unknown, logs: string[], walletLamports: 
   if (custom) {
     const code = Number(custom[1])
     const failing = /Program (\w+) failed: custom program error/.exec(text)?.[1]
-    let name: string | undefined
-    if (failing === AMM_ID) name = AMM[code]
-    else if (failing === DBC_ID || !failing) name = code >= 6000 && code - 6000 < DBC.length ? DBC[code - 6000] : DBC_TAIL[code]
-    if (name && PROGRAM[name]) return PROGRAM[name]
-    if (name) return `Meteora rejected this transaction (${human(name)}). Nothing was sent.`
+    if (failing === PUMP_ID && PUMP[code]) return PUMP[code]
+    if (failing === AMM_ID && AMM[code]) return AMM[code]
+    if (failing === JUP_ID && (code === 6001 || code === 6017)) return 'The price moved past your slippage limit on the SOL leg. Nothing was spent. Try again, or allow a little more slippage.'
+    if (failing === PUMP_ID) return `pump.fun rejected this transaction (error ${code}). Nothing was sent.`
     if (code === 1) return 'Not enough balance for this transaction. Check your SOL and token balances.'
   }
   if (/BlockhashNotFound/.test(e)) return 'The network moved on before this could be checked. Nothing was sent. Try again.'

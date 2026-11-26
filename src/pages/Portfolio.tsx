@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
-import { buildClaimFees, fetchCoins, fetchCoinsByCreator, type Coin } from '../lib/dbc'
-import { PLATFORM_WALLET } from '../lib/config'
+import { buildClaimFees, creatorVault, fetchCoinsByCreator, type Coin } from '../lib/chain'
 import { compact, short } from '../lib/format'
 import { errMsg, useAssets, useSubmit, useUsdMany } from '../lib/hooks'
 import { useToast } from '../components/Toast'
@@ -18,13 +17,17 @@ export default function Portfolio() {
   const toast = useToast()
   const [coins, setCoins] = useState<Coin[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const isPlatform = !!publicKey && publicKey.equals(PLATFORM_WALLET)
+  const [vaults, setVaults] = useState<Record<string, number>>({})
   const prices = useUsdMany((coins ?? []).map((c) => c.quoteMint))
 
   const load = useCallback(async () => {
     if (!publicKey) return
-    setCoins(await (isPlatform ? fetchCoins(connection) : fetchCoinsByCreator(connection, publicKey)).catch(() => []))
-  }, [connection, publicKey, isPlatform])
+    const list = await fetchCoinsByCreator(connection, publicKey).catch(() => [] as Coin[])
+    setCoins(list)
+    const quotes = [...new Set(list.map((c) => c.quoteMint))]
+    const vals = await Promise.all(quotes.map((q) => creatorVault(connection, publicKey, q).catch(() => 0)))
+    setVaults(Object.fromEntries(quotes.map((q, i) => [q, vals[i]])))
+  }, [connection, publicKey])
   useEffect(() => {
     load()
   }, [load])
@@ -42,14 +45,23 @@ export default function Portfolio() {
       </div>
     )
 
-  const feeOf = (c: Coin) => (isPlatform ? c.partnerFeeSvx : c.creatorFeeSvx)
-  const claimable = (coins ?? []).filter((c) => feeOf(c) > 0)
+  // one row per pair asset: the creator vault is shared by all coins quoted in it, so one claim pays out all of them
+  const groups = Object.values(
+    (coins ?? []).reduce<Record<string, { quote: string; coins: Coin[]; total: number }>>((acc, c) => {
+      const g = (acc[c.quoteMint] ??= { quote: c.quoteMint, coins: [], total: vaults[c.quoteMint] ?? 0 })
+      g.coins.push(c)
+      g.total += c.creatorFeeSvx
+      return acc
+    }, {}),
+  ).filter((g) => g.total > 0)
 
-  const claim = async (c: Coin) => {
+  const claim = async (g: (typeof groups)[number]) => {
     try {
-      setBusy(c.pool)
-      const sig = await submit(await buildClaimFees(connection, c, publicKey), [], () => {})
-      toast('ok', `Claimed fees from $${c.symbol}`, sig)
+      setBusy(g.quote)
+      // sweep the coin holding the most curve fees, then pay out the whole vault for this pair asset
+      const c = [...g.coins].sort((a, b) => b.creatorFeeSvx - a.creatorFeeSvx)[0]
+      const sig = await submit(await buildClaimFees(connection, c, publicKey), [], () => {}, 'claim')
+      toast('ok', `Claimed creator fees in ${symbol(g.quote)}`, sig)
       load()
     } catch (e) {
       toast('err', errMsg(e))
@@ -62,8 +74,8 @@ export default function Portfolio() {
     <div className="wrap page">
       <div className="page-head">
         <div>
-          <h1>{isPlatform ? 'Platform' : 'Portfolio'}</h1>
-          <p>{isPlatform ? 'Every Flip market and the platform’s share of its fees.' : `Coins launched by ${short(publicKey.toBase58())}.`}</p>
+          <h1>Portfolio</h1>
+          <p>Coins launched by {short(publicKey.toBase58())}.</p>
         </div>
         <Link to="/launch" className="btn btn-primary">
           Launch a coin
@@ -71,17 +83,17 @@ export default function Portfolio() {
       </div>
 
       <div className="surface pad stack" style={{ marginBottom: 18 }}>
-        <h3>Fees to claim</h3>
+        <h3>Creator fees to claim</h3>
         {coins === null ? (
           <p className="muted">Reading your markets from Solana…</p>
-        ) : claimable.length ? (
-          claimable.map((c) => (
-            <div className="kv" key={c.pool} style={{ alignItems: 'center' }}>
+        ) : groups.length ? (
+          groups.map((g) => (
+            <div className="kv" key={g.quote} style={{ alignItems: 'center' }}>
               <span>
-                ${c.symbol}: {compact(feeOf(c))} {symbol(c.quoteMint)}
+                {compact(g.total)} {symbol(g.quote)} from {g.coins.length} coin{g.coins.length > 1 ? 's' : ''}
               </span>
-              <button className="btn btn-ghost btn-sm" disabled={busy === c.pool} onClick={() => claim(c)}>
-                {busy === c.pool ? 'Claiming…' : 'Claim'}
+              <button className="btn btn-ghost btn-sm" disabled={busy === g.quote} onClick={() => claim(g)}>
+                {busy === g.quote ? 'Claiming…' : 'Claim'}
               </button>
             </div>
           ))

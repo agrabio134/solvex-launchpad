@@ -32,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         slippageBps: String(slippageBps),
         swapMode: 'ExactIn',
         restrictIntermediateTokens: 'true',
-        maxAccounts: String(maxAccounts), // leaves room for the Meteora swap in the same transaction
+        maxAccounts: String(maxAccounts), // leaves room for the pump.fun trade in the same transaction
       })
       const r = await fetch(`${BASE}/quote?${qs}`, { signal: AbortSignal.timeout(10_000) })
       const j = await r.json()

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
-import { buildLaunch, fetchCoin, launchCaps, prepareSwap, quoteBalance } from '../lib/dbc'
-import { GRAD_MCAP_USD, OPEN_MCAP_USD, WSOL_MINT } from '../lib/config'
+import { buildLaunch, fetchCoin, fetchPairMints, prepareSwap, quoteBalance, registerCoin } from '../lib/chain'
+import { WSOL_MINT } from '../lib/config'
 import { errMsg, useAssets, useSubmit } from '../lib/hooks'
 import { prepareImage, uploadMetadata } from '../lib/upload'
 import { validateLaunch } from '../lib/validation'
@@ -12,13 +12,8 @@ import { AssetIcon, CoinImg } from '../components/Bits'
 import { compact } from '../lib/format'
 
 const STEPS = ['Coin', 'Pair', 'Review'] as const
-/** Rent for the config, pool, mint, metadata and vault accounts plus network fees (~0.025 SOL measured), with headroom. */
-const LAUNCH_SOL = 0.035
-const FEES = [
-  [100, 'Lower friction'],
-  [200, 'Balanced'],
-  [300, 'Higher earnings'],
-] as const
+/** Rent for the mint, bonding curve and token accounts plus network fees, with headroom. */
+const LAUNCH_SOL = 0.03
 
 export default function Launch() {
   const { connection } = useConnection()
@@ -42,26 +37,24 @@ export default function Launch() {
   const [pair, setPair] = useState(params.get('pair') || WSOL_MINT.toBase58())
   const [pairQ, setPairQ] = useState('')
   const [pairCat, setPairCat] = useState<'all' | 'crypto' | 'stock'>(params.get('pair') ? 'stock' : 'all')
-  const [feeBps, setFeeBps] = useState(100)
-  const [shield, setShield] = useState(true)
-  const [dynamic, setDynamic] = useState(true)
   const [firstBuy, setFirstBuy] = useState('')
   const [agreed, setAgreed] = useState(false)
   const [eligible, setEligible] = useState(false)
   const [status, setStatus] = useState('')
   const [bal, setBal] = useState<number | null>(null)
-  const [caps, setCaps] = useState<{ initialCap: number; graduationCap: number; usd: number | null } | null>(null)
-  const [capsErr, setCapsErr] = useState('')
+  const [supported, setSupported] = useState<Set<string> | null>(null)
+  const [pairsErr, setPairsErr] = useState('')
 
   const asset = find(pair)
   const isStock = asset?.category === 'stock'
   const sym = asset?.symbol ?? 'pair'
 
   useEffect(() => {
-    setCaps(null)
-    setCapsErr('')
-    launchCaps(pair).then(setCaps).catch((e) => setCapsErr(errMsg(e)))
-  }, [pair])
+    fetchPairMints(connection)
+      .then(setSupported)
+      .catch((e) => setPairsErr(`Couldn’t read pump.fun’s list of pair assets: ${errMsg(e)}`))
+  }, [connection])
+  const pairIsSol = pair === WSOL_MINT.toBase58()
 
   useEffect(() => {
     if (!publicKey) return setBal(null)
@@ -70,8 +63,10 @@ export default function Launch() {
 
   const pairs = useMemo(() => {
     const s = pairQ.trim().toLowerCase()
-    return assets.filter((a) => (pairCat === 'all' || a.category === pairCat) && (!s || `${a.symbol} ${a.name}`.toLowerCase().includes(s))).slice(0, 60)
-  }, [assets, pairQ, pairCat])
+    return assets
+      .filter((a) => (!supported || supported.has(a.mint)) && (pairCat === 'all' || a.category === pairCat) && (!s || `${a.symbol} ${a.name}`.toLowerCase().includes(s)))
+      .slice(0, 60)
+  }, [assets, pairQ, pairCat, supported])
 
   let coinError = ''
   try {
@@ -80,7 +75,7 @@ export default function Launch() {
     coinError = e.message
   }
   const coinOk = !!image && !!name.trim() && !!symbol && !coinError
-  const pairOk = !!asset && !asset.halted && !!caps
+  const pairOk = !!asset && !asset.halted && !!supported?.has(pair)
   const buy = Number(firstBuy || 0)
   const canLaunch = coinOk && pairOk && agreed && (!isStock || eligible) && buy >= 0
   const busy = !!status
@@ -111,9 +106,12 @@ export default function Launch() {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({ address: publicKey.toBase58(), name: name.trim(), symbol, description: description.trim(), image, twitter: twitter.trim(), telegram: telegram.trim(), website: website.trim() })
       setStatus('Preparing launch…')
-      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri, feeBps, dynamic, shield })
-      const sig = await submit(tx, signers, setStatus)
+      // create and first buy don't fit one Solana transaction together, so the first buy follows right after
+      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri })
+      const sig = await submit(tx, signers, setStatus, 'launch')
       toast('ok', `$${symbol} launched`, sig)
+      setStatus('Adding it to Flip…')
+      if (!(await registerCoin(mint, sig))) toast('err', 'Your coin is live on pump.fun, but Flip couldn’t list it yet. Refresh in a minute.')
       if (buy > 0) {
         setStatus('Preparing your first buy…')
         try {
@@ -124,7 +122,7 @@ export default function Launch() {
           }
           if (!coin) throw new Error('the market isn’t visible yet, so buy from the coin page')
           const p = await prepareSwap(connection, coin, 'buy', firstBuy, 500, publicKey, 'sol')
-          const bsig = await submit(p.tx, [], setStatus, pair === WSOL_MINT.toBase58() ? 'swap' : 'route', p.luts)
+          const bsig = await submit(p.tx, [], setStatus, p.budget, p.luts)
           toast('ok', `Bought ${compact(p.out)} $${symbol}`, bsig)
         } catch (e) {
           toast('err', `Launched, but the first buy didn’t go through: ${errMsg(e)}`)
@@ -140,7 +138,7 @@ export default function Launch() {
 
   const goStep = (n: number) => {
     if (n > 0 && !coinOk) return toast('err', coinError || 'Add an image, a name and a ticker first')
-    if (n > 1 && !pairOk) return toast('err', capsErr || 'Choose an available pair first')
+    if (n > 1 && !pairOk) return toast('err', pairsErr || 'Choose an available pair first')
     setStep(n)
   }
 
@@ -149,7 +147,7 @@ export default function Launch() {
       <div className="page-head">
         <div>
           <h1>Launch a coin</h1>
-          <p>One transaction creates your coin, its bonding curve and its market.</p>
+          <p>One transaction creates your coin on pump.fun with its bonding curve. It trades here straight away.</p>
         </div>
       </div>
 
@@ -267,7 +265,9 @@ export default function Launch() {
                     <input className="input" placeholder="Search SOL, USDC, NVDAx…" value={pairQ} onChange={(e) => setPairQ(e.target.value)} aria-label="Search pairs" />
                   </label>
                 </div>
+                <p className="muted small">Only pair assets pump.fun accepts for new coins are listed. Traders can still buy and sell any coin with SOL.</p>
                 {catalogError && <div className="note">{catalogError}</div>}
+                {!supported && !pairsErr && <div className="note">Loading the pairs pump.fun accepts…</div>}
                 <div className="pair-list" role="listbox">
                   {pairs.map((a) => (
                     <button key={a.mint} role="option" aria-selected={pair === a.mint} className={`pair-opt ${pair === a.mint ? 'on' : ''}`} disabled={a.halted} onClick={() => setPair(a.mint)}>
@@ -279,7 +279,7 @@ export default function Launch() {
                       <span className={`badge ${a.category === 'stock' ? 'grad' : ''}`}>{a.halted ? 'Halted by issuer' : a.category === 'stock' ? 'Tokenized stock' : 'Crypto'}</span>
                     </button>
                   ))}
-                  {!pairs.length && <div className="empty"><p>No pair matches that search.</p></div>}
+                  {supported && !pairs.length && <div className="empty"><p>No pair matches that search.</p></div>}
                 </div>
                 {isStock && (
                   <div className="note">
@@ -290,7 +290,7 @@ export default function Launch() {
                     </a>
                   </div>
                 )}
-                {capsErr && <div className="err">{capsErr}</div>}
+                {pairsErr && <div className="err">{pairsErr}</div>}
                 <div className="studio-nav">
                   <button className="btn btn-ghost" onClick={() => setStep(0)}>
                     Back
@@ -304,35 +304,10 @@ export default function Launch() {
 
             {step === 2 && (
               <>
-                <h2>Fees and review</h2>
-                <div className="field">
-                  Trading fee
-                  <div className="fee-choice">
-                    {FEES.map(([f, l]) => (
-                      <button key={f} className={feeBps === f ? 'on' : ''} onClick={() => setFeeBps(f)}>
-                        <b>{f / 100}%</b>
-                        <span>{l}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="toggle">
-                  <input type="checkbox" checked={shield} onChange={(e) => setShield(e.target.checked)} />
-                  <div>
-                    <b>Anti-snipe fee</b>
-                    <span>Starts at 10% and falls to {feeBps / 100}% over the first 5 minutes, so bots pay more for the first buys.</span>
-                  </div>
-                </label>
-                <label className="toggle">
-                  <input type="checkbox" checked={dynamic} onChange={(e) => setDynamic(e.target.checked)} />
-                  <div>
-                    <b>Volatility fee</b>
-                    <span>Adds a small extra fee during sharp price swings.</span>
-                  </div>
-                </label>
+                <h2>Review</h2>
                 <label className="field">
                   <span>
-                    First buy <small>optional, in SOL{pair !== WSOL_MINT.toBase58() ? `, swapped to ${sym} for you` : ''}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
+                    First buy <small>optional, in SOL, made right after launch{pairIsSol ? '' : ` (swapped to ${sym} for you)`}{bal !== null ? `. You can spend ${compact(bal)} SOL` : ''}</small>
                   </span>
                   <div className="affix">
                     <input className="input" inputMode="decimal" value={firstBuy} onChange={(e) => setFirstBuy(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
@@ -345,12 +320,10 @@ export default function Launch() {
                   <div><dt>Pair</dt><dd>{sym}</dd></div>
                   <div><dt>Supply</dt><dd>1,000,000,000, fixed</dd></div>
                   <div><dt>Mint authority</dt><dd>Revoked at launch</dd></div>
-                  <div><dt>Opening market cap</dt><dd>${compact(OPEN_MCAP_USD, 0)}{caps ? ` (${compact(caps.initialCap)} ${sym})` : ''}</dd></div>
-                  <div><dt>Graduates at</dt><dd>${compact(GRAD_MCAP_USD, 0)}{caps ? ` (${compact(caps.graduationCap)} ${sym})` : ''}</dd></div>
-                  <div><dt>Trading fee</dt><dd>{shield ? '10% falling to ' : ''}{feeBps / 100}%{dynamic ? ' plus volatility fee' : ''}</dd></div>
-                  <div><dt>Fee split</dt><dd>50% you, 50% Flip</dd></div>
+                  <div><dt>Bonding curve</dt><dd>pump.fun</dd></div>
+                  <div><dt>Graduates to</dt><dd>PumpSwap, automatically when the curve completes</dd></div>
                 </dl>
-                <p className="muted small">Network fees and account rent are paid in SOL. Everything is created in one transaction, which is simulated before your wallet asks you to sign.</p>
+                <p className="muted small">Network fees and account rent (about 0.02 SOL) are paid in SOL. The launch is simulated before your wallet asks you to sign.</p>
                 <label className="check">
                   <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
                   <span>I understand a launch is permanent and memecoins can lose all their value.</span>
@@ -391,20 +364,16 @@ export default function Launch() {
               </b>
             </div>
             <div className="kv">
-              <span>Opens at</span>
-              <b>${compact(OPEN_MCAP_USD, 0)}</b>
+              <span>Curve</span>
+              <b>pump.fun</b>
             </div>
             <div className="kv">
-              <span>Graduates at</span>
-              <b>${compact(GRAD_MCAP_USD, 0)}</b>
+              <span>Graduates to</span>
+              <b>PumpSwap</b>
             </div>
             <div className="kv">
-              <span>Trading fee</span>
-              <b>{feeBps / 100}%</b>
-            </div>
-            <div className="kv">
-              <span>Liquidity after graduation</span>
-              <b>Locked forever</b>
+              <span>Tradable with</span>
+              <b>SOL{pairIsSol ? '' : ` or ${sym}`}</b>
             </div>
           </div>
         </aside>
