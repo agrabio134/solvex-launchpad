@@ -10,6 +10,7 @@ import Stocks from './pages/Stocks'
 import Portfolio from './pages/Portfolio'
 import Docs from './pages/Docs'
 import Ops from './pages/Ops'
+import InstallPrompt from './components/InstallPrompt'
 
 export default function App() {
   const { pathname, hash } = useLocation()
@@ -21,6 +22,7 @@ export default function App() {
   return (
     <>
       <Header />
+      <InstallPrompt />
       <main>
         <Routes>
           <Route path="/" element={ops ? <Ops /> : <Home />} />
