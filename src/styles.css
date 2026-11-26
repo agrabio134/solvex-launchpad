@@ -279,8 +279,18 @@ a.mrow:hover { background: #f8faff; }
 .stats b { font: 700 20px/1.2 var(--display); letter-spacing: -0.01em; }
 .chart-head { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 20px 0; }
 .chart-head b { font-weight: 700; }
-.chart-canvas { height: 300px; margin: 6px 8px 8px; position: relative; }
-.chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; background: rgba(255, 255, 255, 0.75); z-index: 2; }
+.chart-canvas { height: 380px; margin: 10px 8px 8px; position: relative; }
+.chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; z-index: 2; pointer-events: none; }
+.chart-title { display: flex; flex-direction: column; gap: 2px; }
+.chart-title b { font-family: var(--display); font-size: 26px; letter-spacing: -0.02em; display: flex; align-items: baseline; gap: 10px; }
+.chart-title em { font-style: normal; font-family: var(--body); font-size: 14px; font-weight: 600; }
+.chart-title em.up { color: var(--up); }
+.chart-title em.down { color: var(--down); }
+.chart-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chart-tools .slip { background: var(--cloud); border-radius: 10px; padding: 3px; }
+.chart-tools .slip button { padding: 5px 10px; font-size: 13px; font-weight: 600; }
+.chart-tools .slip button.on { background: var(--paper); box-shadow: var(--shadow); }
+@media (max-width: 560px) { .chart-canvas { height: 300px; } .chart-head { flex-wrap: wrap; gap: 10px; } }
 .curve h3 { font-size: 20px; }
 .curve .bar { height: 10px; }
 .tbl-wrap { overflow-x: auto; }

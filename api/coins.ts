@@ -108,8 +108,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'Storage is not configured' })
   try {
     if (req.method === 'GET') {
+      if (req.query.fresh) cache = null
       const all = await readAll()
-      res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=60')
+      // ?fresh skips every cache (used right after a launch); otherwise the edge serves it for a few seconds
+      res.setHeader('Cache-Control', req.query.fresh ? 'no-store' : 'public, s-maxage=5, stale-while-revalidate=30')
       return res.status(200).json({ coins: req.query.all ? all : all.filter((c) => !c.hidden) })
     }
     if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST' })

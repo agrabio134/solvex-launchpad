@@ -50,6 +50,7 @@ import {
   type BondingCurve,
 } from '@pump-fun/pump-sdk'
 import { PUMP_AMM_SDK } from '@pump-fun/pump-sdk/swap'
+import bs58 from 'bs58'
 import { FINAL_STRETCH_AT, MAINNET_GENESIS, WSOL_MINT } from './config'
 import { fromAtomic, toAtomic, validateLaunch } from './validation'
 import { explainSimulation, UserError } from './errors'
@@ -247,9 +248,10 @@ export interface Listing {
 
 let _reg: { at: number; all: boolean; p: Promise<Listing[]> } | null = null
 /** Coins launched on Flip. Hidden ones only for the admin view. */
-export function fetchListings(includeHidden = false): Promise<Listing[]> {
-  if (!_reg || Date.now() - _reg.at > 15000 || _reg.all !== includeHidden) {
-    const p = fetch(`/api/coins${includeHidden ? '?all=1' : ''}`, { signal: AbortSignal.timeout(15000) })
+export function fetchListings(includeHidden = false, fresh = false): Promise<Listing[]> {
+  if (fresh || !_reg || Date.now() - _reg.at > 15000 || _reg.all !== includeHidden) {
+    const q = [includeHidden && 'all=1', fresh && `fresh=${Date.now()}`].filter(Boolean).join('&')
+    const p = fetch(`/api/coins${q ? `?${q}` : ''}`, { signal: AbortSignal.timeout(15000), cache: fresh ? 'no-store' : 'default' })
       .then((r) => r.json())
       .then((j) => (Array.isArray(j.coins) ? (j.coins as Listing[]) : []))
     _reg = { at: Date.now(), all: includeHidden, p }
@@ -263,7 +265,7 @@ export async function registerCoin(mint: string, signature: string) {
   for (let i = 0; i < 6; i++) {
     const r = await fetch('/api/coins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mint, signature }) }).catch(() => null)
     if (r?.ok) {
-      _reg = null
+      await fetchListings(false, true).catch(() => null) // warm the list so the coin page finds it straight away
       return true
     }
     if (r && r.status < 500 && r.status !== 404 && r.status !== 409) return false
@@ -404,8 +406,10 @@ export async function fetchCoins(connection: Connection, opts: { includeUnlisted
 }
 
 export async function fetchCoin(connection: Connection, mintOrCurve: string): Promise<Coin | null> {
-  const list = await fetchListings().catch(() => [] as Listing[])
-  const hit = list.find((l) => l.mint === mintOrCurve) ?? list.find((l) => { try { return bondingCurvePda(new PublicKey(l.mint)).toBase58() === mintOrCurve } catch { return false } })
+  const find = (list: Listing[]) => list.find((l) => l.mint === mintOrCurve) ?? list.find((l) => { try { return bondingCurvePda(new PublicKey(l.mint)).toBase58() === mintOrCurve } catch { return false } })
+  let hit = find(await fetchListings().catch(() => [] as Listing[]))
+  // not in the cached list: it may have just launched, so ask the server directly
+  if (!hit) hit = find(await fetchListings(false, true).catch(() => [] as Listing[]))
   if (!hit || hit.hidden) return null
   return (await loadCoins(connection, [hit]))[0] ?? null
 }
@@ -424,7 +428,10 @@ export interface Trade {
   trader: string
   tokens: number
   svx: number
+  /** curve price right after the trade (pair units per coin) */
   price: number
+  /** curve price right before the trade */
+  pre: number
 }
 
 /**
@@ -443,36 +450,96 @@ export async function parsedTx(connection: Connection, signature: string): Promi
   }
 }
 
-/** Recent trades (curve, or PumpSwap once migrated), rebuilt from the trader's balance changes. Newest first. */
-export async function fetchTrades(connection: Connection, coin: Coin, limit = 20): Promise<Trade[]> {
-  const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.tradingPool), { limit })).filter((s) => !s.err)
-  const txs: (ParsedTransactionWithMeta | null)[] = []
-  for (const part of chunk(sigs, 5)) txs.push(...(await Promise.all(part.map((sg) => parsedTx(connection, sg.signature)))))
-  const quote = coin.quoteMint
+// Anchor event-CPI: 8-byte event tag + 8-byte TradeEvent discriminator, then the event
+const EVENT_TAG = Buffer.from([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d])
+const TRADE_EVENT = Buffer.from([189, 219, 127, 211, 78, 230, 97, 238])
+
+/** pump.fun TradeEvents in a transaction: exact amounts and the curve's reserves after each trade. */
+function curveTrades(tx: ParsedTransactionWithMeta, sig: string, mint: string, qd: number): Trade[] {
   const out: Trade[] = []
-  txs.forEach((tx, i) => {
-    const meta = tx?.meta
-    if (!tx || !meta || meta.err) return
-    const trader = tx.transaction.message.accountKeys.find((k) => k.signer)?.pubkey.toBase58()
-    if (!trader) return
-    const delta = (mint: string) => {
-      const sum = (arr: NonNullable<typeof meta.preTokenBalances>) =>
-        arr.filter((b) => b.mint === mint && b.owner === trader).reduce((s, b) => s + (b.uiTokenAmount.uiAmount ?? 0), 0)
-      return sum(meta.postTokenBalances ?? []) - sum(meta.preTokenBalances ?? [])
+  for (const group of tx.meta?.innerInstructions ?? []) {
+    for (const ix of group.instructions as any[]) {
+      if (ix.programId?.toString() !== PUMP_PROGRAM_ID.toBase58() || typeof ix.data !== 'string') continue
+      let raw: Buffer
+      try {
+        raw = Buffer.from(bs58.decode(ix.data))
+      } catch {
+        continue
+      }
+      if (raw.length < 16 || !raw.subarray(0, 8).equals(EVENT_TAG) || !raw.subarray(8, 16).equals(TRADE_EVENT)) continue
+      try {
+        const e = PUMP_SDK.decodeTradeEventBc(raw.subarray(16))
+        if (e.mint.toBase58() !== mint) continue
+        const quoteAmt = e.quoteAmount && !e.quoteAmount.isZero() ? e.quoteAmount : e.solAmount
+        const vQ = e.virtualQuoteReserves && !e.virtualQuoteReserves.isZero() ? e.virtualQuoteReserves : e.virtualSolReserves
+        const tokens = fromAtomic(e.tokenAmount, TOKEN_DECIMALS)
+        const quote = fromAtomic(quoteAmt, qd)
+        const vt = fromAtomic(e.virtualTokenReserves, TOKEN_DECIMALS)
+        const vq = fromAtomic(vQ, qd)
+        if (!tokens || !vt) continue
+        // reserves before the trade: a buy added quote and took tokens out; a sell the reverse
+        const preT = e.isBuy ? vt + tokens : vt - tokens
+        const preQ = e.isBuy ? vq - quote : vq + quote
+        out.push({ sig, time: Number(e.timestamp.toString()) || tx.blockTime || 0, side: e.isBuy ? 'buy' : 'sell', trader: e.user.toBase58(), tokens, svx: quote, price: vq / vt, pre: preT > 0 && preQ > 0 ? preQ / preT : vq / vt })
+      } catch {
+        /* not a decodable trade event */
+      }
     }
-    const dTok = delta(coin.mint)
-    let dQ = delta(quote)
-    // SOL curves move lamports directly, so read the trader's SOL balance instead
-    if (!dQ && quote === WSOL) {
-      const idx = tx.transaction.message.accountKeys.findIndex((k) => k.pubkey.toBase58() === trader)
-      if (idx >= 0) dQ = (meta.postBalances[idx] - meta.preBalances[idx] + (idx === 0 ? meta.fee : 0)) / 1e9
-    }
-    if (!dTok || !dQ || Math.sign(dTok) === Math.sign(dQ)) return
-    const tokens = Math.abs(dTok)
-    const svx = Math.abs(dQ)
-    out.push({ sig: sigs[i].signature, time: tx.blockTime ?? sigs[i].blockTime ?? 0, side: dTok > 0 ? 'buy' : 'sell', trader, tokens, svx, price: svx / tokens })
-  })
+  }
   return out
+}
+
+/** Balance-change fallback (PumpSwap trades after graduation). */
+function poolTrade(tx: ParsedTransactionWithMeta, sig: string, coin: Coin): Trade | null {
+  const meta = tx.meta
+  if (!meta || meta.err) return null
+  const trader = tx.transaction.message.accountKeys.find((k) => k.signer)?.pubkey.toBase58()
+  if (!trader) return null
+  const delta = (mint: string) => {
+    const sum = (arr: NonNullable<typeof meta.preTokenBalances>) => arr.filter((b) => b.mint === mint && b.owner === trader).reduce((s, b) => s + (b.uiTokenAmount.uiAmount ?? 0), 0)
+    return sum(meta.postTokenBalances ?? []) - sum(meta.preTokenBalances ?? [])
+  }
+  const dTok = delta(coin.mint)
+  let dQ = delta(coin.quoteMint)
+  if (!dQ && coin.quoteMint === WSOL) dQ = (meta.postBalances[0] - meta.preBalances[0] + meta.fee) / 1e9
+  if (!dTok || !dQ || Math.sign(dTok) === Math.sign(dQ)) return null
+  const p = Math.abs(dQ) / Math.abs(dTok)
+  return { sig, time: tx.blockTime ?? 0, side: dTok > 0 ? 'buy' : 'sell', trader, tokens: Math.abs(dTok), svx: Math.abs(dQ), price: p, pre: p }
+}
+
+/** Parsed transactions never change, so each is read once per session. */
+const txCache = new Map<string, Promise<Trade[]>>()
+
+/** Recent trades, newest first: pump.fun trade events on the curve, PumpSwap balance changes after graduation. */
+export async function fetchTrades(connection: Connection, coin: Coin, limit = 60): Promise<Trade[]> {
+  const addrs = coin.migrated ? [coin.pool, coin.tradingPool] : [coin.pool]
+  const sigLists = await Promise.all(addrs.map((a) => connection.getSignaturesForAddress(new PublicKey(a), { limit }, 'confirmed')))
+  const seen = new Set<string>()
+  const sigs = sigLists.flat().filter((s) => !s.err && !seen.has(s.signature) && seen.add(s.signature))
+  const qd = (await mintInfo(connection, new PublicKey(coin.quoteMint))).decimals
+  const out: Trade[] = []
+  for (const part of chunk(sigs, 6)) {
+    const res = await Promise.all(
+      part.map((sg) => {
+        const key = `${coin.mint}:${sg.signature}`
+        if (!txCache.has(key)) {
+          const p = parsedTx(connection, sg.signature).then((tx) => {
+            if (!tx) throw new Error('unavailable') // not cached: retried on the next refresh
+            if (tx.meta?.err) return [] as Trade[]
+            const ev = curveTrades(tx, sg.signature, coin.mint, qd)
+            if (ev.length) return ev
+            const t = poolTrade(tx, sg.signature, coin)
+            return t ? [t] : []
+          })
+          p.catch(() => txCache.delete(key))
+          txCache.set(key, p)
+        }
+        return txCache.get(key)!.catch(() => [] as Trade[])
+      }),
+    )
+    res.forEach((r) => out.push(...r))
+  }
+  return out.sort((a, b) => b.time - a.time)
 }
 
 /* ------------------------------------------------------------ launch */

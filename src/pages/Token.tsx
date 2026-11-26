@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
@@ -38,12 +38,19 @@ export default function Token() {
   const [vault, setVault] = useState(0)
   const usd = useUsd(coin?.quoteMint)
 
+  const misses = useRef(0)
   const load = useCallback(async () => {
     try {
       const c = await fetchCoin(connection, id)
+      // a coin launched seconds ago can take a moment to reach the list: only call it missing after a few tries
+      if (!c) {
+        if (++misses.current >= 4) setMissing(true)
+        return
+      }
+      misses.current = 0
       setCoin(c)
-      setMissing(!c)
-      if (c) fetchTrades(connection, c).then(setTrades).catch(() => {})
+      setMissing(false)
+      fetchTrades(connection, c).then(setTrades).catch(() => {})
     } catch {
       /* keep the last good state */
     }
@@ -61,8 +68,10 @@ export default function Token() {
   }, [connection, publicKey, coin?.mint, coin?.quoteMint, coin?.creator])
 
   useEffect(() => {
+    misses.current = 0
     load()
-    const t = setInterval(load, 15000)
+    // quick retries while a brand-new coin reaches the list, then a steady live refresh
+    const t = setInterval(load, 5000)
     return () => clearInterval(t)
   }, [load])
   useEffect(() => {
