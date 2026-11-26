@@ -32,6 +32,7 @@ import {
   getPausableConfig,
   getTransferFeeConfig,
   getTransferHook,
+  getMint,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   unpackMint,
@@ -48,6 +49,7 @@ import {
   DynamicBondingCurveClient,
   getCurrentPoint,
   getPriceFromSqrtPrice,
+  getSwapQuoteTransferFees,
   MigrationFeeOption,
   MigrationOption,
   TokenAuthorityOption,
@@ -553,13 +555,20 @@ async function coreSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell'
     const a = aIsBase ? base : quote
     const b = aIsBase ? quote : base
     const input = sell ? baseKey : quoteKey
-    const q = amm.getQuote({ inAmount: amountIn, inputTokenMint: input, slippage: slippageBps / 100, poolState: state, currentTime: time, currentSlot: slot, tokenADecimal: a.decimals, tokenBDecimal: b.decimals })
+    const output = sell ? quoteKey : baseKey
+    // Token-2022 assets (e.g. tokenized stocks) need their mint + epoch for fee-aware quotes
+    const t22 = base.program.equals(TOKEN_2022_PROGRAM_ID) || quote.program.equals(TOKEN_2022_PROGRAM_ID)
+    const epoch = t22 ? (await connection.getEpochInfo()).epoch : 0
+    const info = async (k: PublicKey, prog: PublicKey) => (prog.equals(TOKEN_2022_PROGRAM_ID) ? { mint: await getMint(connection, k, 'confirmed', prog), currentEpoch: epoch } : undefined)
+    const inInfo = await info(input, sell ? base.program : quote.program)
+    const outInfo = await info(output, sell ? quote.program : base.program)
+    const q = amm.getQuote({ inAmount: amountIn, inputTokenMint: input, slippage: slippageBps / 100, poolState: state, currentTime: time, currentSlot: slot, tokenADecimal: a.decimals, tokenBDecimal: b.decimals, inputTokenInfo: inInfo, outputTokenInfo: outInfo })
     if (!q.consumedInAmount.eq(amountIn)) throw new UserError('The pool can’t fill this whole amount. Try a smaller amount.')
     const tx = await amm.swap({
       payer: owner,
       pool: address,
       inputTokenMint: input,
-      outputTokenMint: sell ? quoteKey : baseKey,
+      outputTokenMint: output,
       amountIn,
       minimumAmountOut: q.minSwapOutAmount,
       tokenAMint: state.tokenAMint,
@@ -584,6 +593,8 @@ async function coreSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell'
     hasReferral: false,
     eligibleForFirstSwapWithMinFee: false,
     currentPoint: await getCurrentPoint(connection, config.activationType),
+    // tokenized stocks are Token-2022: the quote must account for their mint extensions
+    ...(await getSwapQuoteTransferFees(connection, config, { baseMint: baseKey })),
   })
   if (q.minimumAmountOut.isZero()) throw new UserError('That amount is too small to trade. Enter a bigger amount.')
   const tx = await dbc.pool.swap({ owner, pool: new PublicKey(coin.pool), amountIn, minimumAmountOut: q.minimumAmountOut, swapBaseForQuote: sell, referralTokenAccount: null })
@@ -597,8 +608,8 @@ async function coreSwap(connection: Connection, coin: Coin, side: 'buy' | 'sell'
 
 /* ---- Jupiter (SOL <-> pair asset) ---- */
 
-async function jupQuote(inputMint: string, outputMint: string, amount: BN, slippageBps: number) {
-  const r = await fetch(`/api/jup?op=quote&inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}`, { signal: AbortSignal.timeout(15000) })
+async function jupQuote(inputMint: string, outputMint: string, amount: BN, slippageBps: number, maxAccounts = 20) {
+  const r = await fetch(`/api/jup?op=quote&inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount.toString()}&slippageBps=${slippageBps}&maxAccounts=${maxAccounts}`, { signal: AbortSignal.timeout(15000) })
   const j = await r.json().catch(() => ({}))
   if (!r.ok || !j.outAmount) throw new UserError(`There’s no SOL route for this pair right now${j?.error ? ` (${j.error})` : ''}. Switch “Pay with” to the pair asset, or try a different amount.`)
   return j
@@ -646,23 +657,38 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
 
   // split slippage across the two legs so the total stays within what the user chose
   const leg = Math.max(10, Math.floor(slippageBps / 2))
-  if (!sell) {
-    const jq = await jupQuote(WSOL_MINT.toBase58(), coin.quoteMint, toAtomic(amount, 9), leg)
-    const pairMin = new BN(jq.otherAmountThreshold)
-    const c = await coreSwap(connection, coin, 'buy', pairMin, leg, owner)
+  // Jupiter routes vary in size; ask for simpler routes until the combined transaction fits
+  let lastErr: unknown
+  for (const maxAccounts of [20, 14, 10]) {
+    try {
+      const p = await routed2(connection, coin, side, amount, leg, owner, maxAccounts, base.decimals)
+      const size = compileForWallet(p.tx, owner, PublicKey.default.toBase58(), [], 'route', p.luts).serialize().length
+      if (size <= 1232) return { ...p, via }
+      lastErr = new UserError('This SOL route is too complex for one transaction. Try a different amount, or pay with the pair asset.')
+    } catch (e) {
+      lastErr = e
+      if (e instanceof UserError && /no SOL route/i.test(e.message)) break
+    }
+  }
+  throw lastErr
+}
+
+async function routed2(connection: Connection, coin: Coin, side: 'buy' | 'sell', amount: string, leg: number, owner: PublicKey, maxAccounts: number, baseDecimals: number) {
+  if (side === 'buy') {
+    const jq = await jupQuote(WSOL_MINT.toBase58(), coin.quoteMint, toAtomic(amount, 9), leg, maxAccounts)
+    const c = await coreSwap(connection, coin, 'buy', new BN(jq.otherAmountThreshold), leg, owner)
     const j = await jupInstructions(connection, jq, owner)
     return {
       tx: new Transaction().add(...j.ixs, ...c.ixs),
       luts: j.luts,
-      out: fromAtomic(c.outRaw, base.decimals),
-      minOut: fromAtomic(c.minOutRaw, base.decimals),
+      out: fromAtomic(c.outRaw, baseDecimals),
+      minOut: fromAtomic(c.minOutRaw, baseDecimals),
       priceImpact: c.priceImpact != null ? c.priceImpact + Number(jq.priceImpactPct ?? 0) * 100 : null,
       route: `SOL to pair asset via Jupiter, then ${c.route}`,
-      via,
     }
   }
-  const c = await coreSwap(connection, coin, 'sell', toAtomic(amount, base.decimals), leg, owner)
-  const jq = await jupQuote(coin.quoteMint, WSOL_MINT.toBase58(), c.minOutRaw, leg)
+  const c = await coreSwap(connection, coin, 'sell', toAtomic(amount, baseDecimals), leg, owner)
+  const jq = await jupQuote(coin.quoteMint, WSOL_MINT.toBase58(), c.minOutRaw, leg, maxAccounts)
   const j = await jupInstructions(connection, jq, owner)
   return {
     tx: new Transaction().add(...c.ixs, ...j.ixs),
@@ -671,7 +697,6 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
     minOut: fromAtomic(new BN(jq.otherAmountThreshold), 9),
     priceImpact: c.priceImpact != null ? c.priceImpact + Number(jq.priceImpactPct ?? 0) * 100 : null,
     route: `${c.route}, then pair asset to SOL via Jupiter`,
-    via,
   }
 }
 

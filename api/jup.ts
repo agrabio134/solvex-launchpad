@@ -22,6 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const op = req.query.op
     if (op === 'quote' && req.method === 'GET') {
       const { inputMint, outputMint, amount, slippageBps } = req.query
+      const maxAccounts = Math.min(40, Math.max(8, Number(req.query.maxAccounts) || 20))
       if (!isAddr(inputMint) || !isAddr(outputMint) || !/^\d{1,20}$/.test(String(amount)) || !/^\d{1,4}$/.test(String(slippageBps)))
         return res.status(400).json({ error: 'Bad quote request' })
       const qs = new URLSearchParams({
@@ -31,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         slippageBps: String(slippageBps),
         swapMode: 'ExactIn',
         restrictIntermediateTokens: 'true',
-        maxAccounts: '32', // leaves room for the Meteora swap in the same transaction
+        maxAccounts: String(maxAccounts), // leaves room for the Meteora swap in the same transaction
       })
       const r = await fetch(`${BASE}/quote?${qs}`, { signal: AbortSignal.timeout(10_000) })
       const j = await r.json()
