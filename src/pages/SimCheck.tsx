@@ -1,8 +1,10 @@
 /** TEMPORARY (pump-check branch only): simulate pump.fun launches and trades on mainnet. Sends nothing. */
 import { useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
-import { PublicKey } from '@solana/web3.js'
-import { buildLaunch, compileForWallet, fetchCoinsByMints, fetchPairMints, prepareSwap, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, type Coin } from '../lib/chain'
+import { Keypair, PublicKey } from '@solana/web3.js'
+import BN from 'bn.js'
+import { OnlinePumpSdk, PUMP_SDK, getBuyTokenAmountFromSolAmount } from '@pump-fun/pump-sdk'
+import { parsedTx, buildLaunch, compileForWallet, fetchCoinsByMints, fetchPairMints, prepareSwap, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, type Coin } from '../lib/chain'
 
 const WSOL = 'So11111111111111111111111111111111111111112'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -26,7 +28,7 @@ export default function SimCheck() {
         const r = await connection.simulateTransaction(v, { sigVerify: false, replaceRecentBlockhash: true, commitment: 'confirmed' })
         push({ label, size, fits: size <= 1232, ok: !r.value.err, err: r.value.err, units: r.value.unitsConsumed, ...b.extra, logs: r.value.err ? (r.value.logs ?? []).slice(-8) : undefined })
       } catch (e: any) {
-        push({ label, error: e?.message, stack: String(e?.stack ?? '').split('\n').slice(0, 3) })
+        push({ label, error: e?.message, stack: String(e?.stack ?? '').split('\n').slice(0, 14) })
       }
     }
     ;(async () => {
@@ -37,6 +39,24 @@ export default function SimCheck() {
         push({ pairs })
         const uri = 'https://2n294j50bru6m0pn.public.blob.vercel-storage.com/m/test.json'
         await sim('LAUNCH SOL pair, no buy', async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: WSOL, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri })), budget: 'launch' }), payer)
+        try {
+          const o = new OnlinePumpSdk(connection)
+          const [global, feeConfig] = await Promise.all([o.fetchGlobal(), o.fetchFeeConfig()])
+          const qa = new BN(50_000_000)
+          const amount = getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: qa, quoteControl: null, quoteTransferFee: null } as any)
+          push({ dbg: 'amount', amount: amount.toString(), isBN: BN.isBN(amount), buyback: global.buybackBasisPoints?.toString(), maxDepth: (global as any).maxCurveDepth })
+          const m = Keypair.generate().publicKey
+          for (const variant of ['v2', 'createOnly']) {
+            try {
+              if (variant === 'v2') await PUMP_SDK.createV2AndBuyV2Instructions({ global, mint: m, name: 'X', symbol: 'XX', uri: 'u', creator: payer, user: payer, amount, quoteAmount: qa, mayhemMode: false })
+              push({ dbg: variant, ok: true })
+            } catch (e: any) {
+              push({ dbg: variant, err: e?.message, stack: String(e?.stack ?? '').split('\n').slice(0, 20) })
+            }
+          }
+        } catch (e: any) {
+          push({ dbg: 'setup', err: e?.message })
+        }
         await sim('LAUNCH SOL pair + 0.05 SOL first buy', async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: WSOL, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri, firstBuy: '0.05' })), budget: 'launch' }), payer)
         for (const q of pairs.filter((m) => m !== WSOL).slice(0, 3)) await sim(`LAUNCH ${q.slice(0, 6)} pair, no buy`, async () => ({ ...(await buildLaunch(connection, payer, { quoteMint: q, name: 'Simulation Coin Max Length Name!', symbol: 'SIMCOINXYZ', uri })), budget: 'launch' }), payer)
 
@@ -44,7 +64,7 @@ export default function SimCheck() {
         const holders = new Map<string, { owner: string; amount: number }>()
         const collect = async (program: PublicKey) => {
           const sigs = await connection.getSignaturesForAddress(program, { limit: 25 })
-          const txs = await connection.getParsedTransactions(sigs.filter((s) => !s.err).slice(0, 20).map((s) => s.signature), { maxSupportedTransactionVersion: 0 })
+          const txs = await Promise.all(sigs.filter((s) => !s.err).slice(0, 20).map((s) => parsedTx(connection, s.signature)))
           txs.forEach((t) => (t?.meta?.postTokenBalances ?? []).forEach((b) => {
             const amt = b.uiTokenAmount.uiAmount ?? 0
             if (b.mint.endsWith('pump') && b.owner && amt > 1000 && !holders.has(b.mint) && t!.transaction.message.accountKeys.some((k) => k.signer && k.pubkey.toBase58() === b.owner)) holders.set(b.mint, { owner: b.owner, amount: amt })

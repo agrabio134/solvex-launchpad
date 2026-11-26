@@ -4,5 +4,5 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 export default defineConfig({
   plugins: [react(), nodePolyfills({ include: ['buffer', 'crypto', 'stream', 'util'], globals: { Buffer: true, process: true } })],
-  build: { chunkSizeWarningLimit: 3000 },
+  build: { sourcemap: true, chunkSizeWarningLimit: 3000 },
 })

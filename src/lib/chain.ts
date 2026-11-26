@@ -424,17 +424,27 @@ export interface Trade {
   price: number
 }
 
+/**
+ * One parsed transaction, read without web3.js's response check: mainnet now carries version-1 transactions,
+ * which web3.js 1.x rejects. Null when unavailable.
+ */
+export async function parsedTx(connection: Connection, signature: string): Promise<ParsedTransactionWithMeta | null> {
+  try {
+    const r = await (connection as any)._rpcRequest('getTransaction', [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 1, commitment: 'confirmed' }])
+    const tx = r?.result
+    if (!tx) return null
+    tx.transaction.message.accountKeys = tx.transaction.message.accountKeys.map((k: any) => ({ ...k, pubkey: new PublicKey(k.pubkey) }))
+    return tx
+  } catch {
+    return null
+  }
+}
+
 /** Recent trades (curve, or PumpSwap once migrated), rebuilt from the trader's balance changes. Newest first. */
 export async function fetchTrades(connection: Connection, coin: Coin, limit = 20): Promise<Trade[]> {
   const sigs = (await connection.getSignaturesForAddress(new PublicKey(coin.tradingPool), { limit })).filter((s) => !s.err)
   const txs: (ParsedTransactionWithMeta | null)[] = []
-  for (const part of chunk(sigs, 10)) {
-    try {
-      txs.push(...(await connection.getParsedTransactions(part.map((s) => s.signature), { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })))
-    } catch {
-      txs.push(...part.map(() => null)) // rate-limited: show what we have
-    }
-  }
+  for (const part of chunk(sigs, 5)) txs.push(...(await Promise.all(part.map((sg) => parsedTx(connection, sg.signature)))))
   const quote = coin.quoteMint
   const out: Trade[] = []
   txs.forEach((tx, i) => {
