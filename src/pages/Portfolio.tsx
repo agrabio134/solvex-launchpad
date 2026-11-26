@@ -63,7 +63,7 @@ export default function Portfolio() {
       <div className="page-head">
         <div>
           <h1>{isPlatform ? 'Platform' : 'Portfolio'}</h1>
-          <p>{isPlatform ? 'Every Solvex market and the platform’s share of its fees.' : `Coins launched by ${short(publicKey.toBase58())}.`}</p>
+          <p>{isPlatform ? 'Every Flip market and the platform’s share of its fees.' : `Coins launched by ${short(publicKey.toBase58())}.`}</p>
         </div>
         <Link to="/launch" className="btn btn-primary">
           Launch a coin

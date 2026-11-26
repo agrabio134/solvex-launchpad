@@ -79,7 +79,7 @@ export default function Token() {
     return (
       <div className="wrap page">
         <div className="surface empty">
-          <h3>This coin isn’t on Solvex</h3>
+          <h3>This coin isn’t on Flip</h3>
           <p>Check the address, or browse every market instead.</p>
           <Link to="/markets" className="btn btn-primary">
             Browse markets

@@ -70,7 +70,7 @@ export function useUsdMany(mints: string[]) {
 
 /* ------------------------------------------------------------ chain */
 
-/** All Solvex markets, refreshed every `ms`. */
+/** All Flip markets, refreshed every `ms`. */
 export function useCoins(ms = 20000) {
   const { connection } = useConnection()
   const [coins, setCoins] = useState<Coin[]>([])

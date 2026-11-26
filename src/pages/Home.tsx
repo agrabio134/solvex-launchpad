@@ -10,7 +10,7 @@ const FAQ: [string, string][] = [
   ['Does a stock pair mean my coin is backed by the stock?', 'No. The stock is only the currency traders use to buy your coin. Tokenized stocks are issued by xStocks, are not brokerage shares, and come with issuer terms and regional restrictions.'],
   ['How is the price set?', 'Each coin trades on its own Meteora bonding curve. Buys move the price up and sells move it down. No presale and no team allocation: everyone buys from the same curve.'],
   ['What happens at graduation?', `Every coin opens near a $${compact(OPEN_MCAP_USD, 0)} market cap. When it reaches about $${compact(GRAD_MCAP_USD, 0)}, the curve is full and anyone can migrate it into a Meteora DAMM v2 pool on Solana. That liquidity is locked forever, and trading continues on the same page and on Jupiter.`],
-  ['What do creators earn?', 'Creators pick a 1–3% trading fee. After Meteora’s share, half goes to the creator and half to Solvex. Both also earn fees from the locked liquidity after graduation.'],
+  ['What do creators earn?', 'Creators pick a 1–3% trading fee. After Meteora’s share, half goes to the creator and half to Flip. Both also earn fees from the locked liquidity after graduation.'],
   ['Is this financial advice?', 'No. Memecoins are extremely volatile and most lose their value. Only use what you can afford to lose.'],
 ]
 
@@ -30,7 +30,7 @@ export default function Home() {
           <div className="hero-copy">
             <h1>Launch a coin. Pair it with anything.</h1>
             <p>
-              Solvex launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin starts on a fair bonding curve and graduates into
+              Flip launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin starts on a fair bonding curve and graduates into
               liquidity that stays locked forever.
             </p>
             <div className="cta">
@@ -129,7 +129,7 @@ export default function Home() {
           ) : (
             <div className="empty">
               <h3>No markets yet</h3>
-              <p>Launch the first coin on Solvex. It takes one transaction.</p>
+              <p>Launch the first coin on Flip. It takes one transaction.</p>
               <Link to="/launch" className="btn btn-primary">
                 Launch a coin
               </Link>

@@ -192,7 +192,7 @@ export default function Launch() {
                 <div className="grid2">
                   <label className="field">
                     Name
-                    <input className="input" maxLength={32} value={name} onChange={(e) => setName(e.target.value)} placeholder="Flip Frog" />
+                    <input className="input" maxLength={32} value={name} onChange={(e) => setName(e.target.value)} placeholder="Moon Frog" />
                   </label>
                   <label className="field">
                     Ticker
@@ -339,7 +339,7 @@ export default function Launch() {
                   <div><dt>Opening market cap</dt><dd>${compact(OPEN_MCAP_USD, 0)}{caps ? ` (${compact(caps.initialCap)} ${sym})` : ''}</dd></div>
                   <div><dt>Graduates at</dt><dd>${compact(GRAD_MCAP_USD, 0)}{caps ? ` (${compact(caps.graduationCap)} ${sym})` : ''}</dd></div>
                   <div><dt>Trading fee</dt><dd>{shield ? '10% falling to ' : ''}{feeBps / 100}%{dynamic ? ' plus volatility fee' : ''}</dd></div>
-                  <div><dt>Fee split</dt><dd>50% you, 50% Solvex</dd></div>
+                  <div><dt>Fee split</dt><dd>50% you, 50% Flip</dd></div>
                 </dl>
                 <p className="muted small">Network fees and account rent are paid in SOL. Everything is created in one transaction, which is simulated before your wallet asks you to sign.</p>
                 <label className="check">

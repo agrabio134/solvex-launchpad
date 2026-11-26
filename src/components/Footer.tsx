@@ -9,7 +9,7 @@ export default function Footer() {
         <div>
           <div className="brand">
             <Logo size={28} />
-            Solvex
+            Flip
           </div>
           <p>Launch a coin on Solana, pair it with SOL, USDC or a tokenized stock, and graduate it into locked liquidity.</p>
         </div>
@@ -35,7 +35,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="ftr-base">
-        <span>© {new Date().getFullYear()} Solvex. Built on Meteora.</span>
+        <span>© {new Date().getFullYear()} Flip. Built on Meteora.</span>
         <span>Memecoins are volatile and can lose all value. Tokenized stock pairs are subject to issuer terms.</span>
       </div>
     </footer>

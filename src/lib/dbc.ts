@@ -1,5 +1,5 @@
 /**
- * Solvex on-chain logic (Meteora Dynamic Bonding Curve + DAMM v2), FirePad model:
+ * Flip on-chain logic (Meteora Dynamic Bonding Curve + DAMM v2), FirePad model:
  *
  *  - every launch creates its OWN DBC config + pool in one atomic transaction.
  *    quote mint = $FLIP, fee claimer / leftover receiver = the platform wallet.
@@ -231,7 +231,7 @@ function fetchJson(uri: string) {
 
 type Row = { key: PublicKey; pool: VirtualPool; config: PoolConfig }
 
-/** Launched on Solvex (not an older pool that shares the platform wallet). */
+/** Launched on Flip (not an older pool that shares the platform wallet). */
 const listed = (pool: VirtualPool) => Number(pool.poolState.activationPoint.toString()) >= LISTED_AFTER
 
 async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
@@ -314,7 +314,7 @@ async function toCoins(connection: Connection, rows: Row[]): Promise<Coin[]> {
   return coins
 }
 
-/** All $FLIP configs created through Solvex (fee claimer = platform wallet). Cached briefly. */
+/** All $FLIP configs created through Flip (fee claimer = platform wallet). Cached briefly. */
 let _cfgs: { at: number; list: Promise<{ key: PublicKey; config: PoolConfig }[]> } | null = null
 async function platformConfigs(connection: Connection) {
   if (!_cfgs || Date.now() - _cfgs.at > 20000) {
@@ -532,7 +532,7 @@ export async function prepareSwap(connection: Connection, coin: Coin, side: 'buy
   const pool = await dbc.state.getPool(coin.pool)
   if (!pool) throw new Error('Pool no longer available.')
   const config = await dbc.state.getPoolConfig(pool.poolState.config)
-  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET)) throw new Error('Not a Solvex market.')
+  if (!config || !config.feeClaimer.equals(PLATFORM_WALLET)) throw new Error('Not a Flip market.')
 
   if (pool.poolState.isMigrated) {
     const address = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_FEE_ADDRESS[config.migrationFeeOption], new PublicKey(coin.mint), config.quoteMint)

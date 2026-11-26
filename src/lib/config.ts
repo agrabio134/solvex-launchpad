@@ -34,7 +34,7 @@ export const TG_URL: string = env.VITE_TG_URL || ''
 
 /**
  * Only markets launched after this moment (unix seconds) are shown. Hides older pools that share
- * the platform wallet (e.g. from the previous FirePad launchpad). Default: Solvex go-live, 2026-11-25.
+ * the platform wallet (e.g. from the previous FirePad launchpad). Default: Flip go-live, 2026-11-25.
  */
 export const LISTED_AFTER = Number(env.VITE_LISTED_AFTER || 1795616000)
 

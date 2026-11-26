@@ -8,8 +8,8 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'overview',
     title: 'Overview',
     body: [
-      'Solvex is a memecoin launchpad on Solana built on Meteora’s Dynamic Bonding Curve. Every launch creates its own curve settings and market in one transaction, with the Solvex platform wallet as fee partner.',
-      'You choose what your coin trades against: SOL, USDC, or a tokenized stock or ETF from xStocks. $FLIP, the Solvex token, joins the list of pairs when it launches.',
+      'Flip is a memecoin launchpad on Solana built on Meteora’s Dynamic Bonding Curve. Every launch creates its own curve settings and market in one transaction, with the Flip platform wallet as fee partner.',
+      'You choose what your coin trades against: SOL, USDC, or a tokenized stock or ETF from xStocks. $FLIP, the Flip token, joins the list of pairs when it launches.',
     ],
   },
   {
@@ -40,7 +40,7 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     id: 'fees',
     title: 'Fees',
     body: [
-      'Trading fees are paid in the pair asset. After Meteora’s protocol share, the creator gets 50% and Solvex gets 50%. Creators claim from their Portfolio or the coin page at any time.',
+      'Trading fees are paid in the pair asset. After Meteora’s protocol share, the creator gets 50% and Flip gets 50%. Creators claim from their Portfolio or the coin page at any time.',
       'The optional anti-snipe fee starts at 10% and falls to the chosen fee over the first 5 minutes. The optional volatility fee adds a small amount during sharp price swings.',
     ],
   },
@@ -49,13 +49,13 @@ const SECTIONS: { id: string; title: string; body: string[] }[] = [
     title: 'Graduation',
     body: [
       `Coins open near a $${compact(OPEN_MCAP_USD, 0)} market cap and graduate near $${compact(GRAD_MCAP_USD, 0)}, converted into the pair asset at its price when the coin launches. When the curve is full, anyone can press Migrate on the coin page to move the liquidity into a Meteora DAMM v2 pool.`,
-      'That liquidity is locked forever, split between the creator and Solvex, who both keep earning its trading fees. Trading continues on the same page and on Jupiter.',
+      'That liquidity is locked forever, split between the creator and Flip, who both keep earning its trading fees. Trading continues on the same page and on Jupiter.',
     ],
   },
   {
     id: 'risk',
     title: 'Risk',
-    body: ['Memecoins are extremely volatile and most lose their value. Nothing on Solvex is financial advice. Only use what you can afford to lose.'],
+    body: ['Memecoins are extremely volatile and most lose their value. Nothing on Flip is financial advice. Only use what you can afford to lose.'],
   },
 ]
 
