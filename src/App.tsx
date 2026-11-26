@@ -10,6 +10,7 @@ import Stocks from './pages/Stocks'
 import Portfolio from './pages/Portfolio'
 import Docs from './pages/Docs'
 import Ops from './pages/Ops'
+import Flip from './pages/Flip'
 import InstallPrompt from './components/InstallPrompt'
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/profile" element={<Navigate to="/portfolio" replace />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/flip" element={<Flip />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

@@ -126,6 +126,45 @@ export function MarketCard({ coin, price }: { coin: Coin; price: number | undefi
   )
 }
 
+/** Pinned banner for the market's biggest coin by market cap. */
+export function TopCoin({ coin, price }: { coin: Coin; price: number | undefined }) {
+  const { symbol } = useAssets()
+  const q = symbol(coin.quoteMint)
+  return (
+    <Link to={`/coin/${coin.mint}`} className="topcoin">
+      <div className="topcoin-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <path d="M3 7l4.5 4L12 4l4.5 7L21 7l-2 12H5L3 7z" />
+        </svg>
+        Top market cap
+      </div>
+      <div className="topcoin-main">
+        <CoinImg coin={coin} size={88} />
+        <div className="topcoin-id">
+          <b>{coin.name}</b>
+          <div className="mcard-sym">
+            <span>${coin.symbol}</span>
+            <PairTag mint={coin.quoteMint} />
+            <span className="topcoin-ca">{coin.mint.slice(0, 4)}…{coin.mint.slice(-6)}</span>
+          </div>
+          <p className="mcard-desc">{coin.description || 'No description yet.'}</p>
+        </div>
+        <div className="topcoin-stats">
+          <div>
+            <span>Market cap</span>
+            <b>{price ? usd(coin.mcapSvx * price) : `${compact(coin.mcapSvx)} ${q}`}</b>
+          </div>
+          <div className="topcoin-prog">
+            <span>{coin.complete ? (coin.migrated ? 'On PumpSwap' : 'Graduating') : `${pct(coin.progress)} to graduation`}</span>
+            <Progress value={coin.progress} done={coin.complete} />
+          </div>
+          <span className="btn btn-primary btn-sm">Trade ${coin.symbol}</span>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
 export function MarketHead() {
   return (
     <div className="mrow head">

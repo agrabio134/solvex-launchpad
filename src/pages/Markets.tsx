@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAssets, useCoins, useUsdMany } from '../lib/hooks'
-import { MarketCard, MarketHead, MarketRow } from '../components/Bits'
+import { MarketCard, MarketHead, MarketRow, TopCoin } from '../components/Bits'
 
 const FILTERS = [
   ['all', 'All'],
@@ -46,6 +46,13 @@ export default function Markets() {
     [coins, find],
   )
 
+  // the coin with the highest market cap (in USD) is pinned above the list on the All tab
+  const top = useMemo(() => {
+    const cap = (c: (typeof coins)[number]) => c.mcapSvx * (prices[c.quoteMint] ?? 0)
+    return coins.length ? [...coins].sort((a, b) => cap(b) - cap(a))[0] : null
+  }, [coins, prices])
+  const showTop = !!top && filter === 'all' && !q.trim()
+
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
     const usdCap = (m: (typeof coins)[number]) => m.mcapSvx * (prices[m.quoteMint] ?? 0)
@@ -58,8 +65,9 @@ export default function Markets() {
         return true
       })
       .filter((c) => !s || `${c.name} ${c.symbol} ${c.mint}`.toLowerCase().includes(s))
+      .filter((c) => !(filter === 'all' && !s && top && c.mint === top.mint))
       .sort((a, b) => (sort === 'mcap' ? usdCap(b) - usdCap(a) : sort === 'progress' ? b.progress - a.progress : (b.createdAt ?? 0) - (a.createdAt ?? 0)))
-  }, [coins, filter, q, sort, prices, find])
+  }, [coins, filter, q, sort, prices, find, top])
 
   return (
     <div className="wrap page">
@@ -117,6 +125,8 @@ export default function Markets() {
           </div>
         </div>
       </div>
+
+      {showTop && top && <TopCoin coin={top} price={prices[top.quoteMint]} />}
 
       {view === 'grid' && !error && list.length > 0 ? (
         <div className="mgrid">
