@@ -403,7 +403,8 @@ a.mrow:hover { background: #f8faff; }
 /* ---------- markets ---------- */
 .mk-bar { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 20px; }
 .mk-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.mk-tools .search { flex: 0 1 300px; min-width: 220px; }
+.mk-tools .search { flex: 0 1 260px; min-width: 180px; }
+@media (min-width: 821px) { .mk-tools { flex-wrap: nowrap; } }
 .seg button .count { font-style: normal; font-size: 12px; font-weight: 600; margin-left: 7px; padding: 1px 7px; border-radius: 999px; background: rgba(20, 33, 74, 0.07); color: var(--muted); }
 .seg button.on .count { background: var(--mist); color: var(--sky-deep); }
 .sort { display: flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px 0 14px; height: 44px; font-size: 14px; color: var(--muted); }
