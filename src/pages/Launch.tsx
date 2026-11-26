@@ -322,7 +322,6 @@ export default function Launch() {
                   <div><dt>Mint authority</dt><dd>Revoked at launch</dd></div>
                   <div><dt>Bonding curve</dt><dd>pump.fun</dd></div>
                   <div><dt>Graduates to</dt><dd>PumpSwap, automatically when the curve completes</dd></div>
-                  <div><dt>Trading fees</dt><dd>pump.fun’s standard fees, with a creator share paid to you</dd></div>
                 </dl>
                 <p className="muted small">Network fees and account rent (about 0.02 SOL) are paid in SOL. The launch is simulated before your wallet asks you to sign.</p>
                 <label className="check">
