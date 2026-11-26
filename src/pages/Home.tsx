@@ -27,7 +27,7 @@ export default function Home() {
       <section className="hero wrap">
         <div className="hero-grid">
           <div className="hero-copy">
-            <h1>Launch a coin. Pair it with anything.</h1>
+            <h1>Launch a coin. Pair with crypto and stocks.</h1>
             <p>
               Flip launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin starts on a fair bonding curve and graduates into
               liquidity that stays locked forever.

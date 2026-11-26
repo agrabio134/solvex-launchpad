@@ -101,8 +101,9 @@ textarea.input { resize: vertical; }
 .affix .input { padding-right: 80px; }
 .grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.seg { display: inline-flex; padding: 4px; gap: 2px; background: var(--mist); border-radius: 999px; flex-wrap: wrap; }
-.seg button { padding: 7px 14px; border-radius: 999px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.seg { display: inline-flex; padding: 5px; gap: 4px; background: var(--mist); border-radius: 999px; flex-wrap: wrap; }
+.seg button { padding: 9px 18px; border-radius: 999px; font-size: 15.5px; font-weight: 600; color: var(--ink-2); }
+.seg button:hover:not(.on) { color: var(--ink); }
 .seg button.on { background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
 .toggle { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--paper); cursor: pointer; }
 .toggle input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--sky); flex-shrink: 0; }
@@ -379,4 +380,8 @@ a.mrow:hover { background: #f8faff; }
   .mrow { grid-template-columns: 1fr auto; }
   .mrow > :nth-child(4) { display: none; }
   .mrow.head { display: none; }
+}
+
+@media (max-width: 560px) {
+  .seg button { padding: 8px 13px; font-size: 14px; }
 }
