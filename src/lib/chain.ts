@@ -577,12 +577,11 @@ export interface LaunchParams {
  * One transaction: pump.fun create_v2 (Token-2022 coin + bonding curve). The first buy is a separate
  * transaction: create and buy together need more accounts than one Solana transaction holds.
  */
-export async function buildLaunch(connection: Connection, creator: PublicKey, p: LaunchParams) {
+export async function buildLaunch(connection: Connection, creator: PublicKey, p: LaunchParams, mint: Keypair = Keypair.generate()) {
   validateLaunch(p.name, p.symbol)
   if (p.uri.length > 200) throw new Error('Metadata link is too long.')
   const supported = await fetchPairMints(connection)
   if (!supported.has(p.quoteMint)) throw new UserError('pump.fun doesn’t accept this pair asset for new coins right now. Choose another pair.')
-  const mint = Keypair.generate()
   const quote = isSol(p.quoteMint) ? null : await pump(connection).resolveQuoteMint(new PublicKey(p.quoteMint))
   const ix = await PUMP_SDK.createV2Instruction({
     mint: mint.publicKey,

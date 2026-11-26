@@ -143,6 +143,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* ---- register a launch ---- */
+    // every coin launched from Flip has a mint address ending in FLP (found in the launcher's browser)
+    if (!mint.endsWith('FLP')) return res.status(400).json({ error: 'Flip coins have an address ending in FLP' })
     const ip = String(req.headers['x-forwarded-for'] || 'local').split(',')[0].trim()
     if (!take(`ip:${ip}`, 60)) return res.status(429).json({ error: 'Too many requests, try again later.' })
     if ((await allBlobs(`coins/${mint}/`)).length) return res.status(200).json({ ok: true, existing: true })

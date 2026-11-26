@@ -6,6 +6,7 @@ import { buildLaunch, fetchCoin, fetchPairMints, prepareSwap, quoteBalance, regi
 import { WSOL_MINT } from '../lib/config'
 import { errMsg, useAssets, useSubmit } from '../lib/hooks'
 import { prepareImage, uploadMetadata } from '../lib/upload'
+import { MINT_SUFFIX, prefetchMint, takeMint } from '../lib/vanity'
 import { validateLaunch } from '../lib/validation'
 import { useToast } from '../components/Toast'
 import { AssetIcon, CoinImg } from '../components/Bits'
@@ -48,6 +49,11 @@ export default function Launch() {
   const asset = find(pair)
   const isStock = asset?.category === 'stock'
   const sym = asset?.symbol ?? 'pair'
+
+  // find this launch's FLP address in the background while the form is filled in
+  useEffect(() => {
+    prefetchMint().catch(() => {})
+  }, [])
 
   useEffect(() => {
     fetchPairMints(connection)
@@ -110,10 +116,13 @@ export default function Launch() {
     try {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({ address: publicKey.toBase58(), name: name.trim(), symbol, description: description.trim(), image, twitter: twitter.trim(), telegram: telegram.trim(), website: website.trim() })
-      setStatus('Preparing launch…')
       // create and first buy don't fit one Solana transaction together, so the first buy follows right after
-      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri })
+      setStatus(`Finding your ${MINT_SUFFIX} address…`)
+      const mintKey = await takeMint()
+      setStatus('Preparing launch…')
+      const { tx, signers, mint } = await buildLaunch(connection, publicKey, { quoteMint: pair, name: name.trim(), symbol, uri }, mintKey)
       const sig = await submit(tx, signers, setStatus, 'launch')
+      prefetchMint().catch(() => {}) // ready for the next launch
       toast('ok', `$${symbol} launched`, sig)
       setStatus('Adding it to Flip…')
       if (!(await registerCoin(mint, sig))) toast('err', 'Your coin is live on pump.fun, but Flip couldn’t list it yet. Refresh in a minute.')
@@ -136,6 +145,7 @@ export default function Launch() {
       nav(`/coin/${mint}`)
     } catch (e) {
       toast('err', errMsg(e))
+      prefetchMint().catch(() => {}) // a fresh address for the next try
     } finally {
       setStatus('')
     }
@@ -325,6 +335,7 @@ export default function Launch() {
                   <div><dt>Pair</dt><dd>{sym}</dd></div>
                   <div><dt>Supply</dt><dd>1,000,000,000, fixed</dd></div>
                   <div><dt>Mint authority</dt><dd>Revoked at launch</dd></div>
+                  <div><dt>Contract address</dt><dd>Ends in {MINT_SUFFIX}, like every Flip coin</dd></div>
                   <div><dt>Bonding curve</dt><dd>pump.fun</dd></div>
                   <div><dt>Graduates to</dt><dd>PumpSwap, automatically when the curve completes</dd></div>
                 </dl>
