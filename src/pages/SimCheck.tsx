@@ -17,12 +17,12 @@ export default function SimCheck() {
       try {
         // simulation-only payer: a recently active Jupiter trader holding SOL (nothing is signed or sent)
         let payer = new PublicKey('9TNAMr6xphQfcXrJ9ktjbXzY9BBFijzvrQbUoctqiYj1')
-        const JUP = new PublicKey('JUP6LkbZbjS1jKKwapdHNd6pSw1G8BpzCyfR8kTp5LUq')
-        for (const sg of await connection.getSignaturesForAddress(JUP, { limit: 12 })) {
+        const JUP = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+        for (const sg of await connection.getSignaturesForAddress(JUP, { limit: 25 })) {
           await new Promise((r) => setTimeout(r, 700))
           const t = await connection.getTransaction(sg.signature, { maxSupportedTransactionVersion: 0 }).catch(() => null)
           const k = t?.transaction.message.staticAccountKeys[0]
-          if (k && (await connection.getBalance(k).catch(() => 0)) > 3e9) {
+          if (k && (await connection.getBalance(k).catch(() => 0)) > 1.5e9) {
             payer = k
             break
           }
