@@ -7,6 +7,7 @@ import { buildClaimFees, buildClaimLpFees, buildMigrate, fetchCoin, fetchTrades,
 import { PLATFORM_WALLET, explorerAddr, explorerTx, jupiterSwap } from '../lib/config'
 import { ago, compact, pct, price, short } from '../lib/format'
 import { errMsg, useAssets, useSubmit, useUsd } from '../lib/hooks'
+import { UserError } from '../lib/errors'
 import { useToast } from '../components/Toast'
 import { CoinImg, PairTag, Progress, StatusBadge, usd as fmtUsd } from '../components/Bits'
 import PriceChart from '../components/PriceChart'
@@ -126,8 +127,13 @@ export default function Token() {
       async () => {
         const n = Number(amount)
         if (!n) return
-        if (side === 'buy' && n > bal.quote) throw new Error(`Not enough ${q}`)
-        if (side === 'sell' && n > bal.token) throw new Error(`Not enough $${coin.symbol}`)
+        if (side === 'buy' && n > bal.quote)
+          throw new UserError(
+            q === 'SOL'
+              ? `Not enough SOL. You can spend up to ${compact(bal.quote)} SOL here; about 0.01 SOL stays in your wallet for network fees.`
+              : `You’re paying ${amount} ${q}, but your wallet holds ${compact(bal.quote)} ${q}.`,
+          )
+        if (side === 'sell' && n > bal.token) throw new UserError(`You’re selling ${amount} $${coin.symbol}, but your wallet holds ${compact(bal.token)}.`)
         const p = await prepareSwap(connection, coin, side, amount, slippage * 100, publicKey!)
         return submit(p.tx, [], setStatus)
       },

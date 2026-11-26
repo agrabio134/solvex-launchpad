@@ -3,6 +3,7 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import type { Keypair, Transaction } from '@solana/web3.js'
 import { CORE_ASSETS, fetchAssets, fetchCoins, quoteUsd, submit, type Asset, type Coin, type SignTx } from './dbc'
 import { FLIP_MINT } from './config'
+import { friendly } from './errors'
 
 /* ------------------------------------------------------------ assets */
 
@@ -123,11 +124,7 @@ export function useSubmit() {
   )
 }
 
+/** Plain-language message for any error (wallet, network, simulation, on-chain). */
 export function errMsg(e: any): string {
-  const m = e?.message || String(e)
-  if (/User rejected|rejected the request/i.test(m)) return 'Cancelled in wallet'
-  if (/insufficient/i.test(m)) return 'Insufficient balance'
-  if (/slippage|0x1774|ExceededSlippage/i.test(m)) return 'Price moved past your slippage'
-  if (/429|Too many/i.test(m)) return 'Network is busy, retry in a moment'
-  return m.length > 160 ? m.slice(0, 160) + '…' : m
+  return friendly(e)
 }

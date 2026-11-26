@@ -66,6 +66,7 @@ import {
   PLATFORM_WALLET,
 } from './config'
 import { fromAtomic, toAtomic, validateLaunch } from './validation'
+import { explainSimulation, UserError } from './errors'
 
 export type CoinStatus = 'new' | 'final' | 'graduated'
 
@@ -327,14 +328,15 @@ async function platformConfigs(connection: Connection) {
   return _cfgs.list
 }
 
-export async function fetchCoins(connection: Connection): Promise<Coin[]> {
+/** All markets on the platform wallet. `includeUnlisted` also returns pools from before go-live (admin only). */
+export async function fetchCoins(connection: Connection, opts: { includeUnlisted?: boolean } = {}): Promise<Coin[]> {
   const { dbc } = sdk(connection)
   const cfgs = await platformConfigs(connection)
   const rows: Row[] = []
   for (let i = 0; i < cfgs.length; i += 8) {
     const chunk = cfgs.slice(i, i + 8)
     const res = await Promise.all(chunk.map((c) => dbc.state.getPoolsByConfig(c.key)))
-    res.forEach((pools, j) => pools.forEach((p) => listed(p.account) && rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
+    res.forEach((pools, j) => pools.forEach((p) => (opts.includeUnlisted || listed(p.account)) && rows.push({ key: p.publicKey, pool: p.account, config: chunk[j].config })))
   }
   const coins = await toCoins(connection, rows)
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
@@ -694,30 +696,75 @@ export async function submit(
   budget: 'swap' | 'launch' | 'migrate' = signers.length ? 'launch' : 'swap',
 ) {
   await assertMainnet(connection)
-  const latest = await connection.getLatestBlockhash('confirmed')
+  const [latest, lamports] = await Promise.all([connection.getLatestBlockhash('confirmed'), connection.getBalance(owner, 'confirmed')])
+  if (lamports < 10_000) throw new UserError('Your wallet has no SOL to pay the network fee. Add at least 0.01 SOL and try again.')
   const vtx = compileForWallet(tx, owner, latest.blockhash, signers, budget)
-  if (vtx.serialize().length > 1232) throw new Error('This launch is too large for one Solana transaction. Use a shorter name or ticker.')
+  if (vtx.serialize().length > 1232) throw new UserError('This launch is too large for one Solana transaction. Use a shorter name or ticker.')
 
-  onStatus('Simulating on mainnet…')
+  onStatus('Checking the transaction…')
   const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed', replaceRecentBlockhash: false })
-  if (sim.value.err) {
-    const logs = (sim.value.logs ?? []).join('\n')
-    const hint = /insufficient|0x1\b/i.test(logs) ? ' (insufficient balance)' : /slippage|0x1774|ExceededSlippage/i.test(logs) ? ' (price moved)' : ''
-    throw new Error(`Simulation failed${hint}. Nothing was sent.`)
-  }
+  if (sim.value.err) throw new UserError(explainSimulation(sim.value.err, sim.value.logs ?? [], lamports))
 
   onStatus('Approve in your wallet…')
   const signed = await signTransaction(vtx)
-  if (!Buffer.from(signed.message.serialize()).equals(Buffer.from(vtx.message.serialize()))) throw new Error('Wallet changed the transaction; stopped.')
+  if (!Buffer.from(signed.message.serialize()).equals(Buffer.from(vtx.message.serialize()))) throw new UserError('Your wallet changed the transaction, so it wasn’t sent.')
   const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true, maxRetries: 3 })
 
   onStatus('Confirming…')
   for (let i = 0; i < 60; i++) {
     const st = (await connection.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0]
-    if (st?.err) throw new Error(`Transaction failed on-chain: ${sig}`)
+    if (st?.err) throw new UserError('The transaction failed on-chain after it was sent. The network fee was charged; nothing else moved. Check it on Solscan and try again.')
     if (st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized') return sig
-    if ((await connection.getBlockHeight('confirmed')) > latest.lastValidBlockHeight) throw new Error(`Transaction expired. Check ${sig} before retrying.`)
+    if ((await connection.getBlockHeight('confirmed')) > latest.lastValidBlockHeight) throw new UserError('The network took too long and the transaction expired. Nothing was charged. Try again.')
     await new Promise((r) => setTimeout(r, 1500))
   }
-  throw new Error(`Still confirming. Check ${sig} before retrying.`)
+  throw new UserError('Still waiting for the network to confirm. Check your wallet history before trying again.')
+}
+
+export type SignAll = <T extends Transaction | VersionedTransaction>(txs: T[]) => Promise<T[]>
+
+/**
+ * Many independent transactions (e.g. fee claims across markets): simulate each, sign all in one
+ * wallet prompt, then send and confirm one by one. Reports each result instead of stopping at the first failure.
+ */
+export async function submitMany(
+  connection: Connection,
+  owner: PublicKey,
+  signAllTransactions: SignAll,
+  items: { label: string; tx: Transaction }[],
+  onStatus: (s: string) => void,
+) {
+  await assertMainnet(connection)
+  const lamports = await connection.getBalance(owner, 'confirmed')
+  if (lamports < 10_000 * items.length) throw new UserError(`This wallet needs SOL for network fees: about ${(0.00001 * items.length + 0.003).toFixed(4)} SOL for ${items.length} claims. It has ${(lamports / 1e9).toPrecision(2)} SOL.`)
+  const latest = await connection.getLatestBlockhash('confirmed')
+  const ready: { label: string; vtx: VersionedTransaction }[] = []
+  const results: { label: string; ok: boolean; detail: string; sig?: string }[] = []
+  for (const [i, it] of items.entries()) {
+    onStatus(`Checking ${i + 1} of ${items.length}…`)
+    const vtx = compileForWallet(it.tx, owner, latest.blockhash, [], 'swap')
+    const sim = await connection.simulateTransaction(vtx, { sigVerify: false, commitment: 'confirmed' })
+    if (sim.value.err) results.push({ label: it.label, ok: false, detail: explainSimulation(sim.value.err, sim.value.logs ?? [], lamports) })
+    else ready.push({ label: it.label, vtx })
+  }
+  if (!ready.length) return results
+  onStatus(`Approve ${ready.length} transaction${ready.length > 1 ? 's' : ''} in your wallet…`)
+  const signed = await signAllTransactions(ready.map((r) => r.vtx))
+  for (const [i, tx] of signed.entries()) {
+    onStatus(`Sending ${i + 1} of ${signed.length}…`)
+    try {
+      const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 3 })
+      let done = false
+      for (let k = 0; k < 40 && !done; k++) {
+        const st = (await connection.getSignatureStatuses([sig])).value[0]
+        if (st?.err) throw new Error('failed on-chain')
+        done = st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized'
+        if (!done) await new Promise((r) => setTimeout(r, 1500))
+      }
+      results.push({ label: ready[i].label, ok: done, detail: done ? 'Claimed' : 'Still confirming, check Solscan', sig })
+    } catch (e: any) {
+      results.push({ label: ready[i].label, ok: false, detail: e?.message === 'failed on-chain' ? 'Failed on-chain' : 'Couldn’t send, try again' })
+    }
+  }
+  return results
 }

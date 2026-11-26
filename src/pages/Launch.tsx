@@ -12,6 +12,8 @@ import { AssetIcon, CoinImg } from '../components/Bits'
 import { compact } from '../lib/format'
 
 const STEPS = ['Coin', 'Pair', 'Review'] as const
+/** Rent for the config, pool, mint, metadata and vault accounts plus network fees (~0.025 SOL measured), with headroom. */
+const LAUNCH_SOL = 0.035
 const FEES = [
   [100, 'Lower friction'],
   [200, 'Balanced'],
@@ -97,7 +99,15 @@ export default function Launch() {
   const launch = async () => {
     if (!publicKey) return setVisible(true)
     if (!canLaunch) return
-    if (bal !== null && buy > bal) return toast('err', `Your first buy is more than your ${compact(bal)} ${sym}`)
+    try {
+      const lamports = await connection.getBalance(publicKey)
+      const needSol = LAUNCH_SOL + (pair === WSOL_MINT.toBase58() ? buy : 0)
+      if (lamports / 1e9 < needSol)
+        return toast('err', `Not enough SOL. Launching needs about ${LAUNCH_SOL} SOL for rent and network fees${pair === WSOL_MINT.toBase58() && buy ? `, plus your ${buy} SOL first buy` : ''}. Your wallet has ${(lamports / 1e9).toFixed(4)} SOL.`)
+      if (pair !== WSOL_MINT.toBase58() && bal !== null && buy > bal) return toast('err', `Your first buy is ${buy} ${sym}, but your wallet holds ${compact(bal)} ${sym}. Lower it or leave it empty.`)
+    } catch (e) {
+      return toast('err', errMsg(e))
+    }
     try {
       setStatus('Uploading image…')
       const { uri } = await uploadMetadata({ address: publicKey.toBase58(), name: name.trim(), symbol, description: description.trim(), image, twitter: twitter.trim(), telegram: telegram.trim(), website: website.trim() })
