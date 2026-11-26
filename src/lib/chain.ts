@@ -120,6 +120,8 @@ export function fetchAssets(): Promise<{ assets: Asset[]; error?: string }> {
 }
 
 const TOKEN_DECIMALS = 6
+/** tokens a standard pump.fun curve sells before it completes (Global.initialRealTokenReserves) */
+const INITIAL_REAL_TOKENS = 793_100_000
 const WSOL = WSOL_MINT.toBase58()
 const isSol = (mint: string | PublicKey) => {
   const k = typeof mint === 'string' ? mint : mint.toBase58()
@@ -341,7 +343,7 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
       let price = vT > 0 ? vQ / vT : 0
       // constant product: quote that must be in the curve when the last sellable token is bought
       const endT = vT - realT
-      const threshold = endT > 0 ? reserve + (vT * vQ) / endT - vQ : reserve
+      const threshold = endT > vT * 0.01 ? reserve + (vT * vQ) / endT - vQ : reserve
       const pool = pools.get(i)
       let migrated = false
       let tradingPool = curveKeys[i].toBase58()
@@ -352,7 +354,9 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
         const q = vaultAmt.get(pool.quote.toBase58())
         if (b && q) price = q / b
       }
-      const progress = c.complete ? 1 : threshold > 0 ? Math.min(1, reserve / threshold) : 0
+      // pump.fun's own measure: share of the curve's sellable tokens already bought
+      const sellable = Math.max(INITIAL_REAL_TOKENS, realT)
+      const progress = c.complete ? 1 : Math.min(1, Math.max(0, 1 - realT / sellable))
       coins.push({
         quoteMint,
         pool: curveKeys[i].toBase58(),

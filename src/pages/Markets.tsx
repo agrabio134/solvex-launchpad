@@ -5,7 +5,7 @@ import { MarketHead, MarketRow } from '../components/Bits'
 
 const FILTERS = [
   ['all', 'All'],
-  ['new', 'New'],
+  ['new', 'New Pairs'],
   ['final', 'Final stretch'],
   ['graduated', 'Graduated'],
   ['stocks', 'Stock pairs'],

@@ -12,11 +12,31 @@
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { del, list, put } from '@vercel/blob'
-import { PublicKey } from '@solana/web3.js'
+import { createHash } from 'node:crypto'
 import { ed25519 } from '@noble/curves/ed25519'
 import bs58 from 'bs58'
 
-const PUMP = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
+// no @solana/web3.js here: it fails to load in Vercel's Node runtime (ESM-only dependency)
+const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
+const ZERO = '11111111111111111111111111111111'
+const b58 = (b: Uint8Array) => bs58.encode(b)
+
+/** Solana program-derived address: first bump whose hash is off the ed25519 curve. */
+function pda(seeds: Uint8Array[], program: string) {
+  const prog = bs58.decode(program)
+  for (let bump = 255; bump >= 0; bump--) {
+    const h = createHash('sha256')
+    seeds.forEach((x) => h.update(x))
+    h.update(Uint8Array.of(bump)).update(prog).update('ProgramDerivedAddress')
+    const out = h.digest()
+    try {
+      ed25519.ExtendedPoint.fromHex(out)
+    } catch {
+      return b58(out)
+    }
+  }
+  throw new Error('no PDA')
+}
 const WSOL = 'So11111111111111111111111111111111111111112'
 const ADMIN = process.env.VITE_PLATFORM_WALLET || 'C1rdVXhfUe3RDNxMFrGYSHN6MpkhjTLhVaBk3ZpMJWnT'
 const endpoint = () => process.env.RPC_URL || process.env.MAINNET_RPC_URL || 'https://api.mainnet-beta.solana.com'
@@ -29,9 +49,10 @@ async function rpc(method: string, params: unknown[]) {
   return j.result
 }
 
+/** A base58 32-byte address, or null. */
 const pk = (v: unknown) => {
   try {
-    return typeof v === 'string' ? new PublicKey(v) : null
+    return typeof v === 'string' && bs58.decode(v).length === 32 ? v : null
   } catch {
     return null
   }
@@ -102,17 +123,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.op === 'hide' || body.op === 'show') {
       const message = String(body.message ?? '')
       const m = /^Flip ops: (hide|show) ([1-9A-HJ-NP-Za-km-z]{32,44})\nIssued: (\d{13})$/.exec(message)
-      if (!m || m[1] !== body.op || m[2] !== mint.toBase58() || Math.abs(Date.now() - Number(m[3])) > 600_000) return res.status(400).json({ error: 'Stale or malformed request. Try again.' })
+      if (!m || m[1] !== body.op || m[2] !== mint || Math.abs(Date.now() - Number(m[3])) > 600_000) return res.status(400).json({ error: 'Stale or malformed request. Try again.' })
       let ok = false
       try {
-        ok = ed25519.verify(bs58.decode(String(body.signature ?? '')), new TextEncoder().encode(message), new PublicKey(ADMIN).toBytes())
+        ok = ed25519.verify(bs58.decode(String(body.signature ?? '')), new TextEncoder().encode(message), bs58.decode(ADMIN))
       } catch {
         ok = false
       }
       if (!ok) return res.status(401).json({ error: 'Only the admin wallet can do this.' })
-      if (body.op === 'hide') await put(`hidden/${mint.toBase58()}`, '1', { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'text/plain' })
+      if (body.op === 'hide') await put(`hidden/${mint}`, '1', { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'text/plain' })
       else {
-        const urls = (await allBlobs(`hidden/${mint.toBase58()}`)).map((b) => b.url)
+        const urls = (await allBlobs(`hidden/${mint}`)).map((b) => b.url)
         if (urls.length) await del(urls)
       }
       cache = null
@@ -122,21 +143,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     /* ---- register a launch ---- */
     const ip = String(req.headers['x-forwarded-for'] || 'local').split(',')[0].trim()
     if (!take(`ip:${ip}`, 60)) return res.status(429).json({ error: 'Too many requests, try again later.' })
-    if ((await allBlobs(`coins/${mint.toBase58()}/`)).length) return res.status(200).json({ ok: true, existing: true })
+    if ((await allBlobs(`coins/${mint}/`)).length) return res.status(200).json({ ok: true, existing: true })
 
-    const curve = PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'), mint.toBuffer()], PUMP)[0]
+    const curve = pda([Buffer.from('bonding-curve'), bs58.decode(mint)], PUMP)
     const [curveInfo, mintInfo] = await Promise.all([
-      rpc('getAccountInfo', [curve.toBase58(), { encoding: 'base64', commitment: 'confirmed' }]),
-      rpc('getAccountInfo', [mint.toBase58(), { encoding: 'jsonParsed', commitment: 'confirmed' }]),
+      rpc('getAccountInfo', [curve, { encoding: 'base64', commitment: 'confirmed' }]),
+      rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }]),
     ])
     // freshly confirmed launches can take a moment to show on every RPC node: the client retries on 409
     if (!curveInfo?.value || !mintInfo?.value) return res.status(409).json({ error: 'Not visible on-chain yet' })
-    if (curveInfo.value.owner !== PUMP.toBase58()) return res.status(400).json({ error: 'Not a pump.fun coin' })
+    if (curveInfo.value.owner !== PUMP) return res.status(400).json({ error: 'Not a pump.fun coin' })
     const data = Buffer.from(curveInfo.value.data[0], 'base64')
     if (data.length < 115) return res.status(400).json({ error: 'Unexpected curve layout' })
-    const creator = new PublicKey(data.subarray(49, 81)).toBase58()
-    const quoteRaw = new PublicKey(data.subarray(83, 115)).toBase58()
-    const quoteMint = quoteRaw === PublicKey.default.toBase58() ? WSOL : quoteRaw
+    const creator = b58(data.subarray(49, 81))
+    const quoteRaw = b58(data.subarray(83, 115))
+    const quoteMint = quoteRaw === ZERO ? WSOL : quoteRaw
 
     const uri: string = mintInfo.value.data?.parsed?.info?.extensions?.find((e: any) => e.extension === 'tokenMetadata')?.state?.uri ?? ''
     let host = ''
@@ -149,7 +170,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!(ours ? host === ours : host.endsWith('.public.blob.vercel-storage.com'))) return res.status(400).json({ error: 'Only coins launched on Flip can be listed' })
 
     const createdAt = Math.floor(Date.now() / 1000)
-    await put(`coins/${mint.toBase58()}/${createdAt}_${creator}_${quoteMint}`, '1', { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'text/plain' })
+    await put(`coins/${mint}/${createdAt}_${creator}_${quoteMint}`, '1', { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: 'text/plain' })
     cache = null
     return res.status(200).json({ ok: true })
   } catch (e: any) {
