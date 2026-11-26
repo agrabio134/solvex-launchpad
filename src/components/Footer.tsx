@@ -11,7 +11,7 @@ export default function Footer() {
             <Logo size={28} />
             Flip
           </div>
-          <p>Launch a coin on Solana, pair it with SOL, USDC or a tokenized stock, and graduate it into locked liquidity.</p>
+          <p>Launch a coin on Solana, pair it with SOL, USDC or a tokenized stock, and graduate it to PumpSwap.</p>
         </div>
         <div className="ftr-cols">
           <div>

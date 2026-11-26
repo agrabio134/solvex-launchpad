@@ -5,7 +5,7 @@ import { ago, compact } from '../lib/format'
 import { AssetIcon, CoinImg, MarketHead, MarketRow, PairTag, usd } from '../components/Bits'
 
 const FAQ: [string, string][] = [
-  ['What can I pair my coin with?', 'SOL, USDC, or any tokenized stock or ETF the xStocks issuer has on Solana, such as NVDAx or TSLAx. Traders buy your coin with the pair you choose, and creator fees are earned in it. The list follows what pump.fun accepts for new coins.'],
+  ['What can I pair my coin with?', 'SOL, USDC, or a tokenized stock or ETF that pump.fun accepts as a pair, such as NVDAx or TSLAx. Traders buy your coin with the pair you choose, and creator fees are earned in it. The list follows what pump.fun accepts for new coins.'],
   ['Does a stock pair mean my coin is backed by the stock?', 'No. The stock is only the currency traders use to buy your coin. Tokenized stocks are issued by xStocks, are not brokerage shares, and come with issuer terms and regional restrictions.'],
   ['How is the price set?', 'Every coin is a pump.fun coin with its own bonding curve. Buys move the price up and sells move it down. No presale and no team allocation: everyone buys from the same curve.'],
   ['What happens at graduation?', 'When the last tokens on the curve are bought, the curve completes and pump.fun moves the liquidity into a PumpSwap pool automatically. Trading continues on the same page, on pump.fun and on Jupiter.'],
@@ -29,8 +29,8 @@ export default function Home() {
           <div className="hero-copy">
             <h1>Launch a coin. Pair with crypto and stocks.</h1>
             <p>
-              Flip launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin starts on a fair bonding curve and graduates into
-              liquidity that stays locked forever.
+              Flip launches memecoins on Solana against SOL, USDC or a tokenized stock like NVDAx. Every coin is a pump.fun coin: it starts on a fair bonding curve and
+              graduates to PumpSwap on its own.
             </p>
             <div className="cta">
               <Link to="/launch" className="btn btn-primary">
@@ -83,7 +83,7 @@ export default function Home() {
               <AssetIcon key={a.mint} asset={a} size={30} />
             ))}
           </div>
-          <span className="muted">SOL, USDC and {stocks.length ? `${stocks.length} tokenized stocks and ETFs` : 'tokenized stocks'}</span>
+          <span className="muted">SOL, USDC and tokenized stocks like TSLAx, NVDAx and AAPLx</span>
           <Link to="/stocks" className="link">
             See stock pairs
           </Link>
