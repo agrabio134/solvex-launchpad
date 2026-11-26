@@ -10,6 +10,7 @@ import Stocks from './pages/Stocks'
 import Portfolio from './pages/Portfolio'
 import Docs from './pages/Docs'
 import Ops from './pages/Ops'
+import SimCheck from './pages/SimCheck'
 
 export default function App() {
   const { pathname, hash } = useLocation()
@@ -24,6 +25,7 @@ export default function App() {
       <main>
         <Routes>
           <Route path="/" element={ops ? <Ops /> : <Home />} />
+          <Route path="/__sim" element={<SimCheck />} />
           <Route path="/markets" element={<Markets />} />
           <Route path="/board" element={<Navigate to="/markets" replace />} />
           <Route path="/launch" element={<Launch />} />
