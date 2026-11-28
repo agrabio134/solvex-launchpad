@@ -394,6 +394,7 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
       c.twitter = j.twitter || j.extensions?.twitter
       c.telegram = j.telegram || j.extensions?.telegram
       c.website = j.website || j.external_url || j.extensions?.website
+      if (c.mint === FLIP_CA && !c.description) c.description = 'The official Flip token. Fixed 1B supply, mint authority revoked.'
     }),
   )
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
