@@ -1,28 +1,39 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FLIP_CA, WSOL_MINT, X_URL, jupiterSwap } from '../lib/config'
-import { quoteUsd } from '../lib/chain'
+import { useConnection } from '@solana/wallet-adapter-react'
+import { fetchCoin, quoteUsd } from '../lib/chain'
 import { compact, price as fmtPrice } from '../lib/format'
 import { useToast } from '../components/Toast'
 
-const SUPPLY = 1_000_000_000
 
 /** $FLIP: the official contract address, live price and where to buy. */
 export default function Flip() {
   const toast = useToast()
-  const [usd, setUsd] = useState<number | null>(null)
+  const { connection } = useConnection()
+  const [stats, setStats] = useState<{ usd: number; mcap: number; supply: number } | null>(null)
   const [copied, setCopied] = useState(false)
 
+  // price straight from the coin's own curve or PumpSwap pool, the same numbers as its coin page
   useEffect(() => {
     let alive = true
-    const tick = () => quoteUsd(FLIP_CA).then((v) => alive && v && setUsd(v))
+    const tick = async () => {
+      try {
+        const c = await fetchCoin(connection, FLIP_CA)
+        if (!c || !c.priceSvx) return
+        const q = await quoteUsd(c.quoteMint)
+        if (alive && q) setStats({ usd: c.priceSvx * q, mcap: c.mcapSvx * q, supply: c.mcapSvx / c.priceSvx })
+      } catch {
+        /* keep the last numbers */
+      }
+    }
     tick()
-    const t = setInterval(tick, 30000)
+    const t = setInterval(tick, 15000)
     return () => {
       alive = false
       clearInterval(t)
     }
-  }, [])
+  }, [connection])
 
   const copy = async () => {
     try {
@@ -58,15 +69,15 @@ export default function Flip() {
         <div className="flip-stats">
           <div>
             <span>Price</span>
-            <b>{usd ? `$${fmtPrice(usd)}` : '…'}</b>
+            <b>{stats ? `$${fmtPrice(stats.usd)}` : '…'}</b>
           </div>
           <div>
             <span>Market cap</span>
-            <b>{usd ? `$${compact(usd * SUPPLY)}` : '…'}</b>
+            <b>{stats ? `$${compact(stats.mcap)}` : '…'}</b>
           </div>
           <div>
             <span>Supply</span>
-            <b>1B, fixed</b>
+            <b>{stats ? compact(stats.supply) : '…'}</b>
           </div>
         </div>
 

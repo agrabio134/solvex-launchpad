@@ -337,7 +337,9 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
       const qd = (await mintInfo(connection, new PublicKey(quoteMint)).catch(() => null))?.decimals
       if (qd === undefined) return
       const meta = parsedMeta(mintInfos[i]?.data as any)
-      const supply = fromAtomic(c.tokenTotalSupply, TOKEN_DECIMALS) || 1_000_000_000
+      // live on-chain supply (graduation burns part of it), falling back to the curve's total
+      const mintSupply = Number((mintInfos[i]?.data as ParsedAccountData | undefined)?.parsed?.info?.supply ?? 0) / 10 ** TOKEN_DECIMALS
+      const supply = mintSupply || fromAtomic(c.tokenTotalSupply, TOKEN_DECIMALS) || 1_000_000_000
       const vT = fromAtomic(c.virtualTokenReserves, TOKEN_DECIMALS)
       const vQ = fromAtomic(c.virtualQuoteReserves, qd)
       const realT = fromAtomic(c.realTokenReserves, TOKEN_DECIMALS)
@@ -394,7 +396,7 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
       c.twitter = j.twitter || j.extensions?.twitter
       c.telegram = j.telegram || j.extensions?.telegram
       c.website = j.website || j.external_url || j.extensions?.website
-      if (c.mint === FLIP_CA && !c.description) c.description = 'The official Flip token. Fixed 1B supply, mint authority revoked.'
+      if (c.mint === FLIP_CA && !c.description) c.description = 'The official Flip token. Fixed supply, mint authority revoked.'
     }),
   )
   return coins.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
