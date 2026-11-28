@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { useSolPrice } from '../lib/hooks'
-import { X_URL } from '../lib/config'
+import { FLIP_CA, X_URL } from '../lib/config'
 import Logo from './Logo'
 
 export default function Header() {
@@ -23,13 +23,13 @@ export default function Header() {
           <NavLink to="/portfolio">Portfolio</NavLink>
           <NavLink to="/docs">Docs</NavLink>
           <NavLink to="/flip">
-            $FLIP<i className="soon-tag">Soon</i>
+            $FLIP<i className="soon-tag live">Live</i>
           </NavLink>
 
         </nav>
         <div className="hdr-right">
-          <Link to="/flip" className="pill flip-ca" title="The $FLIP contract address is announced soon">
-            <b>$FLIP</b> CA: SOON
+          <Link to="/flip" className="pill flip-ca" title={`Official $FLIP contract address: ${FLIP_CA}`}>
+            <b>$FLIP</b> {FLIP_CA.slice(0, 4)}…{FLIP_CA.slice(-4)}
           </Link>
           <span className="pill slot" title="Live SOL price in USD">
             <i className="dot" />

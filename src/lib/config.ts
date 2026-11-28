@@ -19,6 +19,9 @@ export const WSOL_MINT = new PublicKey('So11111111111111111111111111111111111111
 /** Admin wallet: the only wallet that can open /#ops (hide or restore markets on Flip's list). */
 export const PLATFORM_WALLET = pk(env.VITE_PLATFORM_WALLET) ?? new PublicKey('C1rdVXhfUe3RDNxMFrGYSHN6MpkhjTLhVaBk3ZpMJWnT')
 
+/** The official $FLIP token (a pump.fun coin). */
+export const FLIP_CA: string = env.VITE_FLIP_CA || '7yizwJWbcayGTzF9xpibm3j1T2dvHj1vAtk9tqLfpump'
+
 export const X_URL: string = env.VITE_X_URL || 'https://x.com/Flipchain_'
 export const TG_URL: string = env.VITE_TG_URL || ''
 
