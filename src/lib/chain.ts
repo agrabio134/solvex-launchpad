@@ -51,7 +51,7 @@ import {
 } from '@pump-fun/pump-sdk'
 import { PUMP_AMM_SDK } from '@pump-fun/pump-sdk/swap'
 import bs58 from 'bs58'
-import { FINAL_STRETCH_AT, MAINNET_GENESIS, WSOL_MINT } from './config'
+import { FINAL_STRETCH_AT, FLIP_CA, MAINNET_GENESIS, WSOL_MINT } from './config'
 import { fromAtomic, toAtomic, validateLaunch } from './validation'
 import { explainSimulation, UserError } from './errors'
 
@@ -402,10 +402,16 @@ async function loadCoins(connection: Connection, list: Listing[]): Promise<Coin[
 /** Every market launched on Flip. `includeUnlisted` also returns coins the admin hid. */
 export async function fetchCoins(connection: Connection, opts: { includeUnlisted?: boolean } = {}): Promise<Coin[]> {
   const list = await fetchListings(!!opts.includeUnlisted)
-  return loadCoins(connection, opts.includeUnlisted ? list : list.filter((l) => !l.hidden))
+  const shown = opts.includeUnlisted ? list : list.filter((l) => !l.hidden)
+  // the official $FLIP token is a pump.fun coin launched outside the launchpad, so add it by hand
+  if (!shown.some((l) => l.mint === FLIP_CA)) shown.push(FLIP_LISTING)
+  return loadCoins(connection, shown)
 }
 
+const FLIP_LISTING: Listing = { mint: FLIP_CA, creator: '', quoteMint: '', createdAt: 0 }
+
 export async function fetchCoin(connection: Connection, mintOrCurve: string): Promise<Coin | null> {
+  if (mintOrCurve === FLIP_CA) return (await loadCoins(connection, [FLIP_LISTING]))[0] ?? null
   const find = (list: Listing[]) => list.find((l) => l.mint === mintOrCurve) ?? list.find((l) => { try { return bondingCurvePda(new PublicKey(l.mint)).toBase58() === mintOrCurve } catch { return false } })
   let hit = find(await fetchListings().catch(() => [] as Listing[]))
   // not in the cached list: it may have just launched, so ask the server directly

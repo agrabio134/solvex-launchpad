@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAssets, useCoins, useUsdMany } from '../lib/hooks'
 import { MarketCard, MarketHead, MarketRow, TopCoin } from '../components/Bits'
+import { FLIP_CA } from '../lib/config'
 
 const FILTERS = [
   ['all', 'All'],
@@ -46,8 +47,10 @@ export default function Markets() {
     [coins, find],
   )
 
-  // the coin with the highest market cap (in USD) is pinned above the list on the All tab
+  // the official $FLIP token is pinned above the list on the All tab (otherwise the biggest market cap)
   const top = useMemo(() => {
+    const flip = coins.find((c) => c.mint === FLIP_CA)
+    if (flip) return flip
     const cap = (c: (typeof coins)[number]) => c.mcapSvx * (prices[c.quoteMint] ?? 0)
     return coins.length ? [...coins].sort((a, b) => cap(b) - cap(a))[0] : null
   }, [coins, prices])
